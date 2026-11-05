@@ -3,7 +3,7 @@ import RefineCore
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var model: AppModel!
     private var panel: PanelController!
     private var statusItem: NSStatusItem!
@@ -110,9 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.title = "Refine Settings"
             w.contentView = NSHostingView(rootView: view)
             w.isReleasedWhenClosed = false
+            w.delegate = self
             w.center()
             settingsWindow = w
         }
+        panel.prepareForSecondaryWindow()
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -128,13 +130,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.appearance = NSAppearance(named: .darkAqua)
             w.contentView = NSHostingView(rootView: ArchitectureView(vm: vm))
             w.isReleasedWhenClosed = false
+            w.delegate = self
             if architectureWindow == nil { w.center() }
             architectureWindow = w
         }
+        panel.prepareForSecondaryWindow()
         architectureModel?.planned = request.planned
         Task { await architectureModel?.load() }
         NSApp.activate(ignoringOtherApps: true)
         architectureWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === settingsWindow || window === architectureWindow else { return }
+        // Let AppKit finish ordering the closing window out before raising the notch again.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.settingsWindow?.isVisible != true,
+                  self.architectureWindow?.isVisible != true else { return }
+            self.panel.restoreAfterSecondaryWindow()
+        }
     }
 
     func openFolderPanel() -> URL? {

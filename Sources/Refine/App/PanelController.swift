@@ -15,6 +15,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     let panel: NotchPanel
     private let model: AppModel
     private var previousApp: NSRunningApplication?
+    private var hiddenForSecondaryWindow = false
     var suppressAutoCollapse = false
 
     init(model: AppModel) {
@@ -84,6 +85,9 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func expand() {
+        // Keep the secondary window usable while it owns the UI. The global toggle
+        // resumes working as soon as that window closes and the panel is restored.
+        guard !hiddenForSecondaryWindow else { return }
         guard !model.isExpanded else { panel.makeKey(); return }
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier { previousApp = front }
@@ -106,6 +110,24 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func toggle() { model.isExpanded ? collapse() : expand() }
 
+    /// Gives Refine's regular windows the screen and keyboard focus. The notch panel is a
+    /// status-bar-level window, so merely ordering a regular window forward would leave it
+    /// above that window. Hide it until the secondary window closes.
+    func prepareForSecondaryWindow() {
+        guard !hiddenForSecondaryWindow else { return }
+        hiddenForSecondaryWindow = true
+        model.isExpanded = false
+        panel.orderOut(nil)
+    }
+
+    /// Restore the compact notch affordance after the secondary window goes away.
+    func restoreAfterSecondaryWindow() {
+        guard hiddenForSecondaryWindow else { return }
+        hiddenForSecondaryWindow = false
+        layout(animated: false)
+        panel.orderFrontRegardless()
+    }
+
     /// Runs a modal sheet-like flow (open panel, alert) without the panel collapsing underneath it.
     func withoutAutoCollapse<T>(_ body: () -> T) -> T {
         suppressAutoCollapse = true
@@ -115,9 +137,11 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         guard Preferences.collapseOnFocusLoss, !suppressAutoCollapse, model.isExpanded else { return }
-        // Only collapse when the user moved to another app; Refine's own windows keep the panel open.
+        // Collapse when focus moves from the panel to any other window. Refine's own
+        // secondary windows explicitly hide the panel before they are activated.
         DispatchQueue.main.async { [weak self] in
-            guard let self, !NSApp.isActive, !self.suppressAutoCollapse else { return }
+            guard let self, !self.suppressAutoCollapse, self.model.isExpanded,
+                  !self.panel.isKeyWindow else { return }
             self.collapse(restoreFocus: false)
         }
     }
