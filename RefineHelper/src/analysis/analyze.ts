@@ -18,8 +18,6 @@ export interface AnalyzeResult {
   graph: CodebaseGraph;
   index: FileIndex;
   changes: { added: string[]; modified: string[]; removed: string[] };
-  fileHashes: Record<string, string>;
-  git: { isRepository: boolean; head: string | null; dirtyPaths: string[] };
 }
 
 export function extract(path: string, language: string, text: string): Omit<FileFacts, 'path' | 'language' | 'size' | 'mtimeMs' | 'hash' | 'lines' | 'parse'> & { parse: FileFacts['parse'] } {
@@ -57,7 +55,7 @@ export async function analyze(rootParam: string, workspaceId: string, previous?:
   let reparsed = 0, reused = 0;
   for (const file of files) {
     if (MANIFEST.test(file.path)) manifestFiles.push(file.path);
-    // Every scanned file is hashed (for change review); only known languages are parsed.
+    // Every scanned file is hashed for workspace change detection; only known languages are parsed.
     const language = languageOf(file.path) ?? OTHER;
     const old = prev[file.path];
     if (old && old.size === file.size && old.mtimeMs === file.mtimeMs) { facts.push(old); reused++; continue; }
@@ -87,7 +85,7 @@ export async function analyze(rootParam: string, workspaceId: string, previous?:
   const git = await info(root);
   const fingerprint = createHash('sha256').update(facts.map((f) => `${f.path}:${f.hash}`).join('\n')).digest('hex');
   const warnings: string[] = [];
-  if (!git.isRepository) warnings.push('Not a git repository: change review compares file hashes only.');
+  if (!git.isRepository) warnings.push('Not a git repository: workspace change detection uses file hashes only.');
   const skippedTotal = Object.values(skipped).reduce((a, b) => a + b, 0);
   if (skipped.secret) warnings.push(`${skipped.secret} file(s) that look like secrets or credentials were excluded.`);
   if (skipped.limit) warnings.push(`File limit reached: ${skipped.limit} file(s) were not scanned.`);
@@ -103,6 +101,5 @@ export async function analyze(rootParam: string, workspaceId: string, previous?:
     SUPPORT,
     warnings,
   );
-  const fileHashes = Object.fromEntries(facts.map((f) => [f.path, f.hash]));
-  return { graph, index, changes, fileHashes, git: { isRepository: git.isRepository, head: git.head, dirtyPaths: git.changes.map((c) => c.path) } };
+  return { graph, index, changes };
 }

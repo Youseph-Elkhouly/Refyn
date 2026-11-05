@@ -7,7 +7,7 @@ public enum AppPaths {
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Refine", directoryHint: .isDirectory)
     }
 
-    /// Generated metadata for one workspace: workspace.md and the analyzer's file index.
+    /// Refine-owned analyzer cache for one workspace.
     public static func workspaceDirectory(_ id: UUID) -> URL {
         supportDirectory.appending(path: "Workspaces/\(id.uuidString)", directoryHint: .isDirectory)
     }

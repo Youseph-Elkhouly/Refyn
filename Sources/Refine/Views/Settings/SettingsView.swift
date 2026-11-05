@@ -101,7 +101,7 @@ struct ModelSettings: View {
         do {
             let plan = try await GeminiProvider(apiKey: key, model: Preferences.geminiModel).plan(for: OptimizationRequest(
                 analysis: RequestAnalysis("Add a health check endpoint"), mode: .basic, techniques: [.structured],
-                context: RetrievedContext(workspaceName: "test", languages: [], frameworks: [], components: [], notes: [], recentChanges: [], analyzed: false), iterationLimit: 0))
+                context: RetrievedContext(workspaceName: "test", languages: [], frameworks: [], components: [], notes: [], analyzed: false), iterationLimit: 0))
             status = "Working: \(Preferences.geminiModel) returned a valid plan (\(plan.tasks.count) tasks)."
         } catch { status = error.localizedDescription }
     }

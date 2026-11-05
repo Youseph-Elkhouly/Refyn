@@ -28,7 +28,7 @@ public enum HelperError: Error, LocalizedError, Equatable {
 /// see SharedSchemas/helper-protocol.schema.json). The process stops after a period of inactivity and
 /// whenever the app quits; it also exits by itself when its stdin closes.
 public actor HelperClient {
-    public static let protocolVersion = 1
+    public static let protocolVersion = 2
 
     public struct Hello: Decodable, Sendable { public var protocol_: Int; public var helperVersion: String; public var node: String
         enum CodingKeys: String, CodingKey { case protocol_ = "protocol", helperVersion, node }

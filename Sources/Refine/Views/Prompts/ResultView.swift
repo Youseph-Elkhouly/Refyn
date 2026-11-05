@@ -92,10 +92,6 @@ struct ResultView: View {
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help("Where you'll paste the prompt")
-            IconButton(symbol: "checklist", help: model.execution == nil ? "Review changes (copy the prompt first so Refine records the repository state)" : "Review what changed since you copied the prompt") {
-                Task { await model.startReview() }
-            }
-            .disabled(model.execution == nil)
             IconButton(symbol: "plus", help: "New prompt") { model.input = ""; model.plan = nil; model.route = .compose }
         }
         .padding(.horizontal, 18).padding(.vertical, 10)

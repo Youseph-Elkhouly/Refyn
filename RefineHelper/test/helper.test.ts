@@ -101,10 +101,10 @@ test('route matching handles parameters', () => {
 });
 
 test('protocol rejects bad requests', () => {
-  assert.throws(() => parseRequest('{"protocol":2,"id":"1","method":"hello"}'), /protocol/);
-  assert.throws(() => parseRequest('{"protocol":1,"id":"1","method":"rm"}'), /Unknown method/);
+  assert.throws(() => parseRequest('{"protocol":1,"id":"1","method":"hello"}'), /protocol/);
+  assert.throws(() => parseRequest('{"protocol":2,"id":"1","method":"rm"}'), /Unknown method/);
   assert.throws(() => parseRequest('nope'), /JSON/);
-  assert.equal(parseRequest('{"protocol":1,"id":"1","method":"hello"}').method, 'hello');
+  assert.equal(parseRequest('{"protocol":2,"id":"1","method":"hello"}').method, 'hello');
 });
 
 test('the helper process answers over stdio and exits when stdin closes', async () => {
@@ -112,13 +112,13 @@ test('the helper process answers over stdio and exits when stdin closes', async 
   const child = spawn(process.execPath, [main], { stdio: ['pipe', 'pipe', 'inherit'] });
   let out = '';
   child.stdout.on('data', (d) => (out += d));
-  child.stdin.end('{"protocol":1,"id":"a","method":"hello","params":{}}\n{"protocol":1,"id":"b","method":"nope","params":{}}\n');
+  child.stdin.end('{"protocol":2,"id":"a","method":"hello","params":{}}\n{"protocol":2,"id":"b","method":"nope","params":{}}\n');
   const code = await new Promise((resolve) => child.on('exit', resolve));
   assert.equal(code, 0);
   const lines = out.trim().split('\n').map((l) => JSON.parse(l));
   const a = lines.find((l) => l.id === 'a'), b = lines.find((l) => l.id === 'b');
   assert.equal(a.ok, true);
-  assert.equal(a.result.protocol, 1);
+  assert.equal(a.result.protocol, 2);
   assert.equal(typeof a.result.helperVersion, 'string');
   assert.equal(b.ok, false);
   assert.equal(b.error.code, 'unknown_method');

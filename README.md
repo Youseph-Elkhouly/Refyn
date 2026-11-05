@@ -1,19 +1,18 @@
 # Refine
 
-**Better prompts. Deeper context. Living architecture.**
+**Better prompts. Deeper context. Private by default.**
 
-Refine is a native macOS companion that lives in the MacBook notch. It turns rough instructions into effective prompts for coding agents (Claude Code, Codex, Cursor, T3 Code, Zed…), understands your codebase through static analysis, and keeps an evidence-backed architecture diagram current as agents change your code.
+Refine is a native macOS companion that lives in the MacBook notch. It turns rough instructions into effective prompts for coding agents and uses local workspace analysis, notes, and saved instructions to add relevant context.
 
 ```
 open (⌃⌥Space) → pick workspace → type or dictate → Optimize → Copy → run in your agent
-      → Review Changes → Confirm → architecture + context updated → next prompt is better informed
 ```
 
 ## Requirements
 
 - macOS 14+, Xcode 16 / Swift 6
 - Node.js 20+ (for the analysis helper)
-- Git (optional, enables line diffs in reviews)
+- Git (optional, improves workspace file discovery)
 - A Gemini API key (optional; without one, prompts are built by local rules)
 
 ## Build and run
@@ -41,10 +40,11 @@ Sources/
   RefineCore/                     Foundation-only library, fully unit-tested
     PromptPlan.swift              PromptPlan, techniques, modes (the "what the user wants" model)
     WorkspaceStore.swift          GRDB/SQLite persistence + migrations
-    Models/                       Workspace, Note, SavedPrompt, ExecutionRecord, ChangeReview, CodebaseGraph, ArchitectureDiff
+    Models/                       Workspace, Note, SavedPrompt, CodebaseGraph
     PromptEngineering/            RequestAnalysis, TechniqueRegistry, LLMProvider (Gemini), PromptComposer, PromptOptimizer
     Workspace/                    context retrieval, workspace.md generation, app paths
-    Architecture/                 HelperClient (process + protocol), ArchitectureService (scan, review, confirm, render)
+    Architecture/                 HelperClient (process + protocol)
+    Workspace/                    WorkspaceAnalyzer, context retrieval, workspace.md generation, app paths
     Agents/                       AgentAdapter interface + manual adapters
     Security/                     Keychain
   Refine/                         SwiftUI + AppKit app
@@ -56,7 +56,6 @@ RefineHelper/                     Node.js helper (TypeScript)
   src/protocol/                   versioned JSON-lines protocol
   src/analysis/                   walker, extractors (TS compiler API; Python/Swift/Prisma patterns), graph builder
   src/git/                        read-only git (status, diff) with repo-config programs disabled
-  src/giotto/                     CodebaseGraph → Giotto diagram → SVG
 SharedSchemas/                    JSON Schemas for the protocol and CodebaseGraph
 Tests/RefineCoreTests/            unit + integration tests
 ```
@@ -67,13 +66,11 @@ Responsibilities are separated as the spec asks:
 | --- | --- | --- |
 | Static analyzer (helper) | Files, languages, frameworks, imports, symbols, routes, models, entry points | Execute repository code, read secrets |
 | Gemini 2.5 Flash | Intent, decomposition, constraints, criteria — as schema-validated JSON | See whole files; its paths are dropped unless the analyzer knows them |
-| Giotto | Lays out and renders the diagram | — (Refine does not reimplement rendering) |
-| Git analyzer | Diffs since the hand-off baseline | Run hooks, fsmonitor, external diff or textconv programs |
-| Verification | Reconciles repository changes into the verified graph on user confirmation | Treat agent output as proof |
+| Workspace analyzer | Extracts bounded project metadata for relevant prompt context | Execute repository code or read secrets |
 
 ### Prompt pipeline
 
-1. Intent extraction · 2. task classification · 3. context retrieval (top components by overlap, included notes, recent verified changes; never whole files) · 4. technique selection (Auto/Basic/Advanced/Custom over 17 techniques) — all local and deterministic.
+1. Intent extraction · 2. task classification · 3. context retrieval (top components by overlap and included notes; never whole files) · 4. technique selection (Auto/Basic/Advanced/Custom over 17 techniques) — all local and deterministic.
 5–7. One Gemini call with `responseSchema` returns tasks + dependencies, constraints, success criteria, confirmed requirements vs. suggested decisions, missing information, planned components. It is validated: required fields, unique task ids, known dependencies, no cycles, bounded sizes; file references the analyzer cannot confirm are removed. Repository content is wrapped as untrusted reference data.
 8. The prompt is composed locally and deterministically from the plan. 9. Intent preservation: identifiers, file names, routes, numbers and quoted strings from the request must survive; if not, the original request is quoted verbatim. 10. The plan (including the original prompt) is saved.
 
@@ -93,15 +90,9 @@ Excluded always: `.env*`, keys/certificates, credential and secret files, `node_
 
 Incremental: a per-workspace file index (in Application Support) lets rescans skip unchanged files by size+mtime, and skip re-parsing unchanged content by SHA-256.
 
-### Feedback loop
+### Workspace context
 
-- **Copy** records an `ExecutionRecord` with a baseline: HEAD, a hash of every scanned file, and which files were already dirty.
-- **Review Changes** rescans and compares hashes to that baseline, so earlier unrelated edits are not attributed to the agent; git supplies line counts and patches against the baseline commit. Files that already had local edits are flagged. The review lists added/modified/deleted files, component and relationship changes (with unverified ones marked), dependency manifests and test files touched.
-- **Confirm** stores the reviewed graph as the next verified snapshot (with its diff) and regenerates `workspace.md`. **Reject** keeps the verified architecture; the observed state is saved as an unverified version for history.
-
-### Architecture window
-
-Giotto's SVG in a WKWebView (no network, strict CSP) with pan, zoom and selection. Selecting a component shows its files, symbols, routes, connections and evidence. Versions list every snapshot; changes since the previous verified version are highlighted (added green, modified yellow, removed red dashed); planned components from the current prompt appear in a separate dashed "Planned (not implemented)" group. Export to SVG.
+Workspace files are scanned locally. Refine retrieves relevant component metadata, project notes, and bounded source references for each prompt.
 
 ## Data and privacy
 
@@ -112,18 +103,16 @@ Giotto's SVG in a WKWebView (no network, strict CSP) with pan, zoom and selectio
 
 ## Agent integrations
 
-`AgentAdapter` describes what an integration can observe (session start/completion, output, tool summaries, changed files). The shipped adapters (Claude Code, Codex, Cursor, T3 Code, Zed, other) are copy-and-paste hand-offs with no observed events; Refine never invents completion events. Pasting an agent's final message into the review is optional supporting context. Adapters that read documented agent hooks can be added behind the same interface.
+Agent destinations (Claude Code, Codex, Cursor, T3 Code, Zed, other) are labels for copy-and-paste hand-off. Refine does not monitor agent sessions.
 
 ## Known limitations
 
 - Python/Swift analysis is pattern-based, not a full parser; Go, Rust, Java and others are not analyzed yet.
 - The app is ad-hoc signed and not sandboxed (the helper reads the selected folders directly); security-scoped bookmarks are stored for a future sandboxed build.
-- Diagrams show at most 45 components (most connected first); the rest are counted.
 - `--snapshot` cannot draw AppKit-backed controls (text editors, menus, segmented pickers), which appear as placeholders in the PNGs.
 
 ## Third-party
 
-- [Giotto](https://github.com/nicoloboschi/giotto) (MIT), pinned to a commit — diagram rendering.
 - [GRDB.swift](https://github.com/groue/GRDB.swift) (MIT) — SQLite.
 - [WhisperKit](https://github.com/argmaxinc/WhisperKit) (MIT) — on-device speech recognition.
 - [TypeScript](https://github.com/microsoft/TypeScript) (Apache-2.0) — parsing JS/TS (parser only).

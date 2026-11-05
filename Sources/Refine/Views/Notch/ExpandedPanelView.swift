@@ -15,7 +15,6 @@ struct ExpandedPanelView: View {
                 case .result: ResultView(model: model)
                 case .notes: NotesView(model: model)
                 case .saved: SavedPromptsView(model: model)
-                case .review: ReviewView(model: model)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -95,7 +94,6 @@ struct WorkspaceMenu: View {
             if let ws = model.current {
                 Button("Re-analyze \(ws.name)") { Task { await model.analyze() } }
                 Button("Rename \(ws.name)…") { newName = ws.name; renaming = ws }
-                Button("Reveal workspace.md") { NSWorkspace.shared.activateFileViewerSelecting([AppPaths.workspaceDirectory(ws.id).appending(path: "workspace.md")]) }
                 Divider()
                 Button("Remove \(ws.name) from Refine", role: .destructive) { Task { await model.remove(ws) } }
             }

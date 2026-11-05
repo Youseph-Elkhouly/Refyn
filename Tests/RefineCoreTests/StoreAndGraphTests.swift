@@ -68,18 +68,6 @@ final class StoreAndGraphTests: XCTestCase {
         XCTAssertEqual(listed.map(\.originalPrompt), ["Fix the parser"])
     }
 
-    func testSnapshotsAreVersioned() async throws {
-        let ws = try await store.addDirectory(dir)
-        let g = try Fixtures.graph()
-        let v1 = try await store.appendSnapshot(ArchitectureSnapshot(workspaceID: ws.id, version: 0, label: "scan", verified: true, graph: g))
-        let v2 = try await store.appendSnapshot(ArchitectureSnapshot(workspaceID: ws.id, version: 0, label: "rejected", verified: false, graph: g))
-        XCTAssertEqual([v1.version, v2.version], [1, 2])
-        let latestVerified = try await store.latestSnapshot(workspaceID: ws.id)
-        XCTAssertEqual(latestVerified?.id, v1.id)
-        let latestAny = try await store.latestSnapshot(workspaceID: ws.id, verifiedOnly: false)
-        XCTAssertEqual(latestAny?.id, v2.id)
-    }
-
     func testV1DatabaseMigratesNotes() async throws {
         let url = dir.appending(path: "old.sqlite")
         let queue = try DatabaseQueue(path: url.path)
@@ -92,46 +80,40 @@ final class StoreAndGraphTests: XCTestCase {
         }
         try v1.migrate(queue)
         let id = UUID()
+        let promptID = UUID()
         try await queue.write { db in
             try db.execute(sql: "INSERT INTO workspaces VALUES (?, 'old', '/tmp/old', NULL, 'remember this', 0, 0)", arguments: [id.uuidString])
+            try db.execute(sql: "INSERT INTO savedPrompts VALUES (?, ?, 'Keep me', 'Existing prompt', 0)", arguments: [promptID.uuidString, id.uuidString])
         }
         try queue.close()
         let migrated = try WorkspaceStore(databaseURL: url)
         let notes = try await migrated.notes(workspaceID: id)
         XCTAssertEqual(notes.map(\.body), ["remember this"])
-    }
-
-    func testArchitectureDiff() throws {
-        let old = try Fixtures.graph()
-        var nodes = old.nodes
-        nodes[1].symbols.append(GraphSymbol(name: "paginate", kind: "function", path: "src/services/users.ts", line: 9))
-        nodes.append(GraphNode(id: "ext:pg", name: "pg", type: .external, path: ""))
-        let edges = old.edges + [
-            GraphEdge(source: "mod:src/services", target: "ext:pg", relation: "uses-database", evidence: [SourceRef(path: "src/services/users.ts", line: 1)], verification: .confirmed),
-            GraphEdge(source: "mod:src/server", target: "mod:src/services", relation: "calls-api", verification: .inferred),
-        ]
-        let diff = ArchitectureDiff.between(old, try Fixtures.graph(nodes: nodes, edges: edges))
-        XCTAssertEqual(diff.addedNodes.map(\.id), ["ext:pg"])
-        XCTAssertEqual(diff.modifiedNodes.map(\.id), ["mod:src/services"])
-        XCTAssertEqual(diff.modifiedNodes.first?.addedSymbols, ["function paginate"])
-        XCTAssertEqual(diff.addedEdges.count, 2)
-        XCTAssertEqual(diff.unverifiedEdges.map(\.relation), ["calls-api"])
-        XCTAssertTrue(ArchitectureDiff.between(old, old).isEmpty)
+        let saved = try await migrated.savedPrompts(workspaceID: id)
+        XCTAssertEqual(saved.map(\.prompt), ["Existing prompt"])
+        let migratedQueue = try DatabaseQueue(path: url.path)
+        let retainedTables = try await migratedQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        XCTAssertTrue(retainedTables.contains("notes"))
+        XCTAssertTrue(retainedTables.contains("savedPrompts"))
+        XCTAssertFalse(retainedTables.contains("architectureSnapshots"))
+        XCTAssertFalse(retainedTables.contains("executionRecords"))
     }
 
     func testWorkspaceDocumentAndContextRetrieval() throws {
         let graph = try Fixtures.graph()
         let ws = Workspace(name: "sample", path: "/tmp/sample")
         let notes = [Note(workspaceID: ws.id, title: "Style", body: "Prefer small functions"), Note(workspaceID: ws.id, title: "Private", body: "secret plan", includeInContext: false)]
-        let md = WorkspaceDocument.render(workspace: ws, graph: graph, notes: notes, recentChanges: [(Date(timeIntervalSince1970: 0), "Added pagination")])
+        let md = WorkspaceDocument.render(workspace: ws, graph: graph, notes: notes)
         for heading in ["## Project overview", "## Languages and frameworks", "## Architecture summary", "## Important modules", "## Relevant source files",
-                        "## Existing APIs", "## Database structure", "## Development constraints", "## User notes", "## Recent verified changes"] {
+                        "## Existing APIs", "## Database structure", "## Development constraints", "## User notes"] {
             XCTAssertTrue(md.contains(heading), "missing \(heading)")
         }
         XCTAssertTrue(md.contains("GET /api/users/:id"))
         XCTAssertFalse(md.contains("secret plan"), "excluded notes stay out of context")
 
-        let ctx = ContextRetriever.retrieve(for: RequestAnalysis("paginate listUsers in the user service"), workspaceName: "sample", graph: graph, notes: notes, recentChanges: [])
+        let ctx = ContextRetriever.retrieve(for: RequestAnalysis("paginate listUsers in the user service"), workspaceName: "sample", graph: graph, notes: notes)
         XCTAssertEqual(ctx.components.first?.id, "mod:src/services")
         XCTAssertEqual(ctx.notes, ["Style: Prefer small functions"])
     }

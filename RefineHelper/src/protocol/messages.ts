@@ -1,10 +1,10 @@
 // Wire protocol between the Refine app and this helper: one JSON object per line on stdin/stdout.
 // Schema: SharedSchemas/helper-protocol.schema.json. Bump PROTOCOL_VERSION on any breaking change.
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const HELPER_VERSION = '0.1.0';
 
-export type Method = 'hello' | 'analyze' | 'git.info' | 'git.diff';
-export const METHODS: readonly Method[] = ['hello', 'analyze', 'git.info', 'git.diff'];
+export type Method = 'hello' | 'analyze';
+export const METHODS: readonly Method[] = ['hello', 'analyze'];
 
 export interface Request {
   protocol: number;
@@ -58,9 +58,3 @@ export function optionalString(params: Record<string, unknown>, key: string): st
   return v;
 }
 
-export function stringArray(params: Record<string, unknown>, key: string): string[] {
-  const v = params[key];
-  if (v === undefined || v === null) return [];
-  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) throw new HelperError('bad_request', `params.${key} must be an array of strings`);
-  return v as string[];
-}

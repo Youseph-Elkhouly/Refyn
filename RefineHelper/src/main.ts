@@ -4,10 +4,9 @@
 import { createInterface } from 'node:readline';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { HELPER_VERSION, PROTOCOL_VERSION, HelperError, parseRequest, requireString, optionalString, stringArray, type Request, type Response } from './protocol/messages.js';
+import { HELPER_VERSION, PROTOCOL_VERSION, HelperError, parseRequest, requireString, optionalString, type Request, type Response } from './protocol/messages.js';
 import { analyze } from './analysis/analyze.js';
 import { SUPPORT } from './analysis/languages.js';
-import { info, diff } from './git/git.js';
 import type { FileIndex } from './analysis/types.js';
 
 export async function handle(req: Request): Promise<unknown> {
@@ -25,7 +24,7 @@ export async function handle(req: Request): Promise<unknown> {
           if (parsed?.version === 1 && parsed.files && typeof parsed.files === 'object') cache = parsed;
         } catch { /* first run, or unreadable cache: full scan */ }
       }
-      const { index, ...result } = await analyze(requireString(p, 'root'), optionalString(p, 'workspaceId') ?? '', cache);
+      const { index, changes: _changes, ...result } = await analyze(requireString(p, 'root'), optionalString(p, 'workspaceId') ?? '', cache);
       if (indexPath) {
         await mkdir(dirname(indexPath), { recursive: true });
         await writeFile(`${indexPath}.tmp`, JSON.stringify(index));
@@ -33,10 +32,6 @@ export async function handle(req: Request): Promise<unknown> {
       }
       return result;
     }
-    case 'git.info':
-      return info(requireString(p, 'root'));
-    case 'git.diff':
-      return { files: await diff(requireString(p, 'root'), optionalString(p, 'base') ?? null, stringArray(p, 'paths').slice(0, 200)) };
   }
 }
 

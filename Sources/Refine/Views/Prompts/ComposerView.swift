@@ -105,12 +105,8 @@ struct ComposerView: View {
             } else if model.current == nil {
                 Button("Choose a workspace for context") { if let url = AppActions.chooseFolder() { Task { await model.addWorkspace(url) } } }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-            } else if let snap = model.verifiedSnapshot {
-                Text("\(snap.graph.nodes.count) components in context").help("Context comes from the last verified analysis (v\(snap.version)).")
-            }
-            if model.execution != nil {
-                Button { Task { await model.startReview() } } label: { Label("Review changes", systemImage: "checklist") }
-                    .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+            } else if let graph = model.workspaceGraph {
+                Text("\(graph.nodes.count) components in context").help("Context comes from local workspace analysis.")
             }
             Spacer()
             Text("\(Preferences.toggleShortcut.display) toggle · hold \(Preferences.pushToTalkShortcut.display) to dictate")

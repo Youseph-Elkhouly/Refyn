@@ -18,12 +18,11 @@ public struct PromptOptimizer: Sendable {
         public var workspace: Workspace?
         public var graph: CodebaseGraph?
         public var notes: [Note]
-        public var recentChanges: [String]
         public var iterationLimit: Int
         public init(text: String, mode: PromptMode, customTechniques: Set<PromptTechnique> = [], workspace: Workspace? = nil, graph: CodebaseGraph? = nil,
-                    notes: [Note] = [], recentChanges: [String] = [], iterationLimit: Int = 3) {
+                    notes: [Note] = [], iterationLimit: Int = 3) {
             self.text = text; self.mode = mode; self.customTechniques = customTechniques; self.workspace = workspace; self.graph = graph
-            self.notes = notes; self.recentChanges = recentChanges; self.iterationLimit = iterationLimit
+            self.notes = notes; self.iterationLimit = iterationLimit
         }
     }
 
@@ -35,7 +34,7 @@ public struct PromptOptimizer: Sendable {
 
     public func cacheKey(for input: Input) -> String {
         let analysis = RequestAnalysis(input.text)
-        let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes, recentChanges: input.recentChanges)
+        let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         let parts = [analysis.text, input.mode.rawValue, input.customTechniques.map(\.rawValue).sorted().joined(separator: ","), context.hash,
                      String(input.iterationLimit), provider?.identifier ?? "local", "v1"]
         return SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
@@ -46,7 +45,7 @@ public struct PromptOptimizer: Sendable {
         let analysis = RequestAnalysis(input.text)
         guard !analysis.text.isEmpty else { throw PromptError.emptyInput }
         // 3: context, bounded and never whole files.
-        let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes, recentChanges: input.recentChanges)
+        let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         // 4: techniques.
         let techniques = registry.select(mode: input.mode, analysis: analysis, custom: input.customTechniques, hasContext: !context.isEmpty)
         let iterationLimit = techniques.contains(.boundedIteration) ? max(1, min(10, input.iterationLimit)) : 0

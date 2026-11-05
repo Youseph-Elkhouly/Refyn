@@ -6,7 +6,7 @@ import RefineCore
 @Observable
 @MainActor
 final class AppModel {
-    enum Route: Equatable { case compose, result, notes, saved, review }
+    enum Route: Equatable { case compose, result, notes, saved }
     enum AnalysisState: Equatable { case idle, running, failed(String) }
     struct Banner: Equatable { enum Kind { case info, warning, error }; var text: String; var kind: Kind }
 
@@ -19,7 +19,7 @@ final class AppModel {
     private(set) var current: Workspace?
     private(set) var notes: [Note] = []
     private(set) var savedPrompts: [SavedPrompt] = []
-    private(set) var verifiedSnapshot: ArchitectureSnapshot?
+    private(set) var workspaceGraph: CodebaseGraph?
     private(set) var analysis: AnalysisState = .idle
 
     // Prompting
@@ -30,18 +30,12 @@ final class AppModel {
     private(set) var isOptimizing = false
     var agentID = Preferences.agentID { didSet { Preferences.agentID = agentID } }
 
-    // Review
-    private(set) var execution: ExecutionRecord?
-    private(set) var review: ChangeReview?
-    private(set) var isReviewing = false
-    var agentOutput = ""
-
     var banner: Banner?
     let voice = VoiceController()
 
     let store: WorkspaceStore
     private(set) var helper: HelperClient
-    private(set) var architecture: ArchitectureService
+    private(set) var analyzer: WorkspaceAnalyzer
     var onExpand: () -> Void = {}
     var onCollapse: () -> Void = {}
 
@@ -50,21 +44,21 @@ final class AppModel {
         self.store = store
         let helper = HelperClient(nodePath: Preferences.nodePath)
         self.helper = helper
-        architecture = ArchitectureService(helper: helper, store: store)
+        analyzer = WorkspaceAnalyzer(helper: helper)
         voice.onTranscript = { [weak self] text in self?.receiveTranscript(text) }
     }
 
     func load() async {
         await reloadWorkspaces()
         let preferred = workspaces.first { $0.id == Preferences.lastWorkspaceID } ?? workspaces.first
-        if let preferred { await select(preferred, scanIfNeeded: false) }
+        if let preferred { await select(preferred, scanIfNeeded: true) }
     }
 
     /// Recreates the helper after Node settings change.
     func restartHelper() async {
         await helper.stop()
         helper = HelperClient(nodePath: Preferences.nodePath)
-        architecture = ArchitectureService(helper: helper, store: store)
+        analyzer = WorkspaceAnalyzer(helper: helper)
     }
 
     func shutdown() async { await helper.stop() }
@@ -94,13 +88,11 @@ final class AppModel {
         current = workspace
         Preferences.lastWorkspaceID = workspace.id
         plan = nil
-        review = nil
-        execution = nil
         route = .compose
         try? await store.touch(workspace.id)
         await reloadWorkspaceData()
         // Scans run only for a newly chosen workspace or on request, never continuously in the background.
-        if scanIfNeeded && verifiedSnapshot == nil { await analyze() }
+        if scanIfNeeded && workspaceGraph == nil { await analyze() }
     }
 
     func rename(_ workspace: Workspace, to name: String) async {
@@ -117,7 +109,7 @@ final class AppModel {
         await reloadWorkspaces()
         if current?.id == workspace.id {
             current = nil
-            if let next = workspaces.first { await select(next, scanIfNeeded: false) } else { notes = []; savedPrompts = []; verifiedSnapshot = nil }
+            if let next = workspaces.first { await select(next, scanIfNeeded: false) } else { notes = []; savedPrompts = []; workspaceGraph = nil }
         }
     }
 
@@ -126,8 +118,7 @@ final class AppModel {
         do {
             notes = try await store.notes(workspaceID: ws.id)
             savedPrompts = try await store.savedPrompts(workspaceID: ws.id)
-            verifiedSnapshot = try await store.latestSnapshot(workspaceID: ws.id)
-            execution = try await store.executions(workspaceID: ws.id, limit: 1).first { $0.status == .sent || $0.status == .reviewing }
+            workspaceGraph = nil
         } catch { show(error.localizedDescription, .error) }
     }
 
@@ -135,7 +126,7 @@ final class AppModel {
         guard let ws = current, analysis != .running else { return }
         analysis = .running
         do {
-            verifiedSnapshot = try await architecture.scan(ws, label: verifiedSnapshot == nil ? "Initial scan" : "Manual scan")
+            workspaceGraph = try await analyzer.analyze(ws).graph
             analysis = .idle
         } catch {
             analysis = .failed(error.localizedDescription)
@@ -149,7 +140,6 @@ final class AppModel {
         n.updatedAt = .now
         do { try await store.save(n) } catch { show(error.localizedDescription, .error) }
         await reloadWorkspaceData()
-        if let ws = current { _ = try? await architecture.regenerateContext(ws) }
     }
 
     func delete(_ note: Note) async {
@@ -204,10 +194,8 @@ final class AppModel {
         let key = useModel ? Preferences.keychain.read(Preferences.geminiAccount) : nil
         let provider: (any LLMProvider)? = key.map { GeminiProvider(apiKey: $0, model: Preferences.geminiModel) }
         let optimizer = PromptOptimizer(provider: provider)
-        var recent: [String] = []
-        if let ws = current { recent = (try? await architecture.recentVerifiedChanges(ws.id))?.map(\.summary) ?? [] }
-        let input = PromptOptimizer.Input(text: text, mode: mode, customTechniques: customTechniques, workspace: current, graph: verifiedSnapshot?.graph,
-                                          notes: notes, recentChanges: recent, iterationLimit: Preferences.iterationLimit)
+        let input = PromptOptimizer.Input(text: text, mode: mode, customTechniques: customTechniques, workspace: current, graph: workspaceGraph,
+                                          notes: notes, iterationLimit: Preferences.iterationLimit)
         do {
             // Identical inputs reuse the stored plan instead of calling the model again.
             if provider != nil, !regenerate, let cached = try await store.cachedPlan(cacheKey: optimizer.cacheKey(for: input)), cached.provider != "local" {
@@ -226,66 +214,10 @@ final class AppModel {
         }
     }
 
-    /// Copies the prompt and records the repository baseline for a later review.
     func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        let adapter = AgentRegistry.adapter(agentID)
-        show("Copied. \(adapter.handOffHint)")
-        guard let ws = current else { return }
-        let planID = plan?.id
-        Task {
-            do { execution = try await architecture.beginExecution(workspace: ws, planID: planID, agent: adapter.id) } catch {
-                show("Copied, but the repository baseline could not be recorded: \(error.localizedDescription)", .warning)
-            }
-        }
-    }
-
-    // MARK: Review
-
-    func startReview() async {
-        guard let ws = current else { show("Choose a workspace first.", .warning); return }
-        guard let record = execution else { show("Copy a prompt first so Refine can record where the repository started.", .warning); return }
-        isReviewing = true
-        route = .review
-        defer { isReviewing = false }
-        do {
-            review = try await architecture.review(record, workspace: ws)
-            var r = record
-            r.status = .reviewing
-            try await store.save(r)
-            execution = r
-        } catch {
-            show(error.localizedDescription, .error)
-        }
-    }
-
-    func confirmReview() async {
-        guard let ws = current, var record = execution, let review else { return }
-        record.agentOutput = agentOutput
-        var label = "Agent change"
-        if let planID = record.planID, let intent = try? await store.plan(planID)?.intent { label = intent }
-        do {
-            verifiedSnapshot = try await architecture.confirm(record, review: review, workspace: ws, label: label)
-            finishReview("Confirmed. Architecture updated to version \(verifiedSnapshot?.version ?? 0).")
-        } catch { show(error.localizedDescription, .error) }
-    }
-
-    func rejectReview() async {
-        guard let ws = current, var record = execution else { return }
-        record.agentOutput = agentOutput
-        do {
-            try await architecture.reject(record, review: review, workspace: ws, label: "Agent change")
-            finishReview("Rejected. The verified architecture is unchanged.")
-        } catch { show(error.localizedDescription, .error) }
-    }
-
-    private func finishReview(_ message: String) {
-        execution = nil
-        review = nil
-        agentOutput = ""
-        route = plan == nil ? .compose : .result
-        show(message)
+        show("Copied.")
     }
 
     // MARK: Voice

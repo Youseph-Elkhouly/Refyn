@@ -77,27 +77,12 @@ public final class WorkspaceStore: Sendable {
                 t.column("createdAt", .double).notNull()
                 t.column("updatedAt", .double).notNull()
             }
-            try db.create(table: "architectureSnapshots") { t in
-                t.column("id", .text).primaryKey()
-                t.column("workspaceID", .text).notNull().indexed().references("workspaces", onDelete: .cascade)
-                t.column("version", .integer).notNull()
-                t.column("verified", .boolean).notNull()
-                t.column("label", .text).notNull()
-                t.column("head", .text)
-                t.column("fingerprint", .text).notNull()
-                t.column("json", .blob).notNull()
-                t.column("createdAt", .double).notNull()
-                t.uniqueKey(["workspaceID", "version"])
-            }
-            try db.create(table: "executionRecords") { t in
-                t.column("id", .text).primaryKey()
-                t.column("workspaceID", .text).notNull().indexed().references("workspaces", onDelete: .cascade)
-                t.column("planID", .text)
-                t.column("status", .text).notNull()
-                t.column("json", .blob).notNull()
-                t.column("createdAt", .double).notNull()
-                t.column("updatedAt", .double).notNull()
-            }
+        }
+        // v3 intentionally removes only Refine's architecture/review history. Workspace,
+        // notes, saved prompts, and prompt plans remain untouched on existing databases.
+        migrator.registerMigration("v3-remove-architecture-review-history") { db in
+            try db.execute(sql: "DROP TABLE IF EXISTS executionRecords")
+            try db.execute(sql: "DROP TABLE IF EXISTS architectureSnapshots")
         }
         return migrator
     }
@@ -225,70 +210,6 @@ public final class WorkspaceStore: Sendable {
         try await database.read { db in
             try Data.fetchAll(db, sql: "SELECT json FROM promptPlans WHERE workspaceID = ? ORDER BY createdAt DESC LIMIT ?", arguments: [workspaceID.uuidString, limit])
                 .map { try Self.decoder.decode(PromptPlan.self, from: $0) }
-        }
-    }
-
-    // MARK: Architecture snapshots
-
-    /// Stores a snapshot as the next version for its workspace and returns it with that version.
-    public func appendSnapshot(_ snapshot: ArchitectureSnapshot) async throws -> ArchitectureSnapshot {
-        try await database.write { db in
-            var s = snapshot
-            s.version = (try Int.fetchOne(db, sql: "SELECT MAX(version) FROM architectureSnapshots WHERE workspaceID = ?", arguments: [s.workspaceID.uuidString]) ?? 0) + 1
-            try db.execute(sql: "INSERT INTO architectureSnapshots (id, workspaceID, version, verified, label, head, fingerprint, json, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                           arguments: [s.id.uuidString, s.workspaceID.uuidString, s.version, s.verified, s.label, s.head, s.fingerprint,
-                                       try Self.encoder.encode(s), s.createdAt.timeIntervalSince1970])
-            return s
-        }
-    }
-
-    public struct SnapshotSummary: Sendable, Hashable, Identifiable {
-        public var id: UUID
-        public var version: Int
-        public var verified: Bool
-        public var label: String
-        public var head: String?
-        public var createdAt: Date
-    }
-
-    public func snapshotSummaries(workspaceID: UUID) async throws -> [SnapshotSummary] {
-        try await database.read { db in
-            try Row.fetchAll(db, sql: "SELECT id, version, verified, label, head, createdAt FROM architectureSnapshots WHERE workspaceID = ? ORDER BY version DESC",
-                             arguments: [workspaceID.uuidString]).map {
-                SnapshotSummary(id: UUID(uuidString: $0["id"])!, version: $0["version"], verified: $0["verified"], label: $0["label"],
-                                head: $0["head"], createdAt: Date(timeIntervalSince1970: $0["createdAt"]))
-            }
-        }
-    }
-
-    public func snapshot(_ id: UUID) async throws -> ArchitectureSnapshot? {
-        try await database.read { db in
-            try Data.fetchOne(db, sql: "SELECT json FROM architectureSnapshots WHERE id = ?", arguments: [id.uuidString]).map { try Self.decoder.decode(ArchitectureSnapshot.self, from: $0) }
-        }
-    }
-
-    public func latestSnapshot(workspaceID: UUID, verifiedOnly: Bool = true) async throws -> ArchitectureSnapshot? {
-        try await database.read { db in
-            try Data.fetchOne(db, sql: "SELECT json FROM architectureSnapshots WHERE workspaceID = ? AND (verified = 1 OR ? = 0) ORDER BY version DESC LIMIT 1",
-                              arguments: [workspaceID.uuidString, verifiedOnly]).map { try Self.decoder.decode(ArchitectureSnapshot.self, from: $0) }
-        }
-    }
-
-    // MARK: Execution records
-
-    public func save(_ record: ExecutionRecord) async throws {
-        let data = try Self.encoder.encode(record)
-        try await database.write { db in
-            try db.execute(sql: "INSERT OR REPLACE INTO executionRecords (id, workspaceID, planID, status, json, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           arguments: [record.id.uuidString, record.workspaceID.uuidString, record.planID?.uuidString, record.status.rawValue, data,
-                                       record.createdAt.timeIntervalSince1970, record.updatedAt.timeIntervalSince1970])
-        }
-    }
-
-    public func executions(workspaceID: UUID, limit: Int = 20) async throws -> [ExecutionRecord] {
-        try await database.read { db in
-            try Data.fetchAll(db, sql: "SELECT json FROM executionRecords WHERE workspaceID = ? ORDER BY createdAt DESC LIMIT ?", arguments: [workspaceID.uuidString, limit])
-                .map { try Self.decoder.decode(ExecutionRecord.self, from: $0) }
         }
     }
 

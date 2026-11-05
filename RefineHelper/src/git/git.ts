@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import { HelperError } from '../protocol/messages.js';
 
 // Repository config can name programs git would run (fsmonitor, external diff, textconv). Refine only
 // reads, so those are switched off for every call.
@@ -55,43 +54,3 @@ export async function listFiles(root: string): Promise<string[]> {
   return [...new Set(out.split('\0').filter(Boolean))];
 }
 
-export interface FileDiff {
-  path: string;
-  additions: number | null;
-  deletions: number | null;
-  patch: string;
-  truncated: boolean;
-}
-
-const PATCH_LIMIT = 12_000;
-
-/** Line counts and a bounded patch for each path, against `base` (a commit) or HEAD. */
-export async function diff(root: string, base: string | null, paths: string[]): Promise<FileDiff[]> {
-  if (!(await isRepository(root))) throw new HelperError('not_a_repository', `${root} is not a git repository`);
-  const against = base ?? (await git(root, ['rev-parse', 'HEAD']).then((s) => s.trim(), () => null));
-  const result: FileDiff[] = [];
-  for (const path of paths) {
-    let numstat = '', patch = '';
-    if (against) {
-      numstat = await git(root, ['diff', '--no-ext-diff', '--no-textconv', '--numstat', against, '--', path]).catch(() => '');
-      patch = await git(root, ['diff', '--no-ext-diff', '--no-textconv', '--unified=3', against, '--', path]).catch(() => '');
-    }
-    if (!patch) {
-      // Untracked (or no commits yet): show it as a new file.
-      const tracked = await git(root, ['ls-files', '--error-unmatch', '--', path]).then(() => true, () => false);
-      if (!tracked) {
-        patch = await git(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-index', '--', '/dev/null', path]).catch((e: Error) => e.message);
-        numstat = await git(root, ['diff', '--no-ext-diff', '--numstat', '--no-index', '--', '/dev/null', path]).catch((e: Error) => e.message);
-      }
-    }
-    const [add, del] = numstat.split('\t');
-    result.push({
-      path,
-      additions: /^\d+$/.test(add ?? '') ? Number(add) : null,
-      deletions: /^\d+$/.test(del ?? '') ? Number(del) : null,
-      patch: patch.slice(0, PATCH_LIMIT),
-      truncated: patch.length > PATCH_LIMIT,
-    });
-  }
-  return result;
-}
