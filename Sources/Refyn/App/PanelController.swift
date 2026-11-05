@@ -120,6 +120,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.orderOut(nil)
     }
 
+    /// Hides the higher-level notch panel before activating a regular app window.
+    func presentSecondaryWindow(_ window: NSWindow) {
+        prepareForSecondaryWindow()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
     /// Restore the compact notch affordance after the secondary window goes away.
     func restoreAfterSecondaryWindow() {
         guard hiddenForSecondaryWindow else { return }

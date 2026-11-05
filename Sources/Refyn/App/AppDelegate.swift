@@ -112,9 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             w.center()
             settingsWindow = w
         }
-        panel.prepareForSecondaryWindow()
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        if let settingsWindow { panel.presentSecondaryWindow(settingsWindow) }
     }
 
     func windowWillClose(_ notification: Notification) {
