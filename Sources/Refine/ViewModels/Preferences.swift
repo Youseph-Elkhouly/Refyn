@@ -15,14 +15,10 @@ enum VoiceMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// UserDefaults-backed settings. Secrets live in the Keychain, never here.
+/// UserDefaults-backed settings. Model inference and speech stay on this Mac.
 enum Preferences {
     static var defaults: UserDefaults { .standard }
 
-    static var geminiModel: String {
-        get { defaults.string(forKey: "geminiModel") ?? "gemini-2.5-flash" }
-        set { defaults.set(newValue, forKey: "geminiModel") }
-    }
     static var iterationLimit: Int {
         get { defaults.object(forKey: "iterationLimit") as? Int ?? 3 }
         set { defaults.set(newValue, forKey: "iterationLimit") }
@@ -68,6 +64,4 @@ enum Preferences {
         set { defaults.setShortcut(newValue, for: "pushToTalkShortcut") }
     }
 
-    static let keychain = Keychain()
-    static let geminiAccount = "gemini-api-key"
 }

@@ -17,10 +17,13 @@ echo "› Building helper"
 
 echo "› Building app ($CONFIG)"
 swift build -c "$CONFIG"
+echo "› Building MLX Metal kernels"
+"$ROOT_DIR/Scripts/build-mlx-metallib.sh" "$ROOT_DIR/.build/$CONFIG"
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$RES_DIR/RefineHelper"
 cp "$BUILD_DIR/Refine" "$APP_DIR/Contents/MacOS/Refine"
+cp "$BUILD_DIR/mlx.metallib" "$APP_DIR/Contents/MacOS/mlx.metallib"
 # SwiftPM resource bundles (GRDB, WhisperKit dependencies).
 for bundle in "$BUILD_DIR"/*.bundle; do
   [ -e "$bundle" ] && cp -R "$bundle" "$RES_DIR/"

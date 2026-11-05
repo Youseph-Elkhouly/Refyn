@@ -1,118 +1,73 @@
 # Refine
 
-**Better prompts. Deeper context. Private by default.**
+**Better prompts. On-device.**
 
-Refine is a native macOS companion that lives in the MacBook notch. It turns rough instructions into effective prompts for coding agents and uses local workspace analysis, notes, and saved instructions to add relevant context.
+Refine is a native macOS assistant that lives in the notch, turns rough instructions into prompts for coding agents, and uses selected workspace metadata and notes for relevant context. Prompt inference runs locally through MLX Swift; there are no API keys, cloud inference requests, or per-prompt charges.
 
-```
-open (⌃⌥Space) → pick workspace → type or dictate → Optimize → Copy → run in your agent
-```
+Open with Control-Option-Space, choose a workspace, type or dictate, Optimize, compare, then copy or save.
 
 ## Requirements
 
-- macOS 14+, Xcode 16 / Swift 6
-- Node.js 20+ (for the analysis helper)
-- Git (optional, improves workspace file discovery)
-- A Gemini API key (optional; without one, prompts are built by local rules)
+- macOS 14+ on Apple Silicon, Xcode 16 / Swift 6
+- About 8 GB of available unified memory recommended for Qwen3 4B 4-bit
+- About 2.3 GB disk space for the model download
+- Node.js 20+ for workspace analysis
+- Git optional; improves workspace file discovery
+
+The model is downloaded from https://huggingface.co/mlx-community/Qwen3-4B-4bit, stored in the Refine Application Support folder, and loaded locally. First setup requires internet; optimization works offline after the download completes.
 
 ## Build and run
 
-```sh
-Scripts/build-app.sh            # builds helper + app → .build/Refine.app (release)
-open .build/Refine.app
-```
+Run Scripts/build-app.sh to build the helper, Swift app, MLX Metal kernels, and .build/Refine.app. Then open .build/Refine.app.
 
-Development:
+Development checks:
 
-```sh
-(cd RefineHelper && npm ci && npm test)   # helper: build + 7 tests
-swift build && swift test                  # app + core: 25 tests (integration tests need Node and the built helper)
-.build/debug/Refine                        # run unbundled (dictation needs the .app for its microphone usage string)
-.build/debug/Refine --snapshot /tmp/snaps  # render the panel's states to PNGs and exit
-```
+- In RefineHelper, run npm ci and npm test.
+- Run swift build and swift test for Swift app/core tests.
 
-First run: the panel appears as a small pill around the notch (or at the top center on displays without one). Click it or press **⌃⌥Space**. Add a workspace from the workspace menu; Refine scans it once. Add your Gemini key in **Settings › Model**, and download a speech model in **Settings › Voice** to dictate (hold **⌃⌥D**).
+The Qwen integration test downloads the model once and runs real on-device generation, including after unloading and reloading in offline mode. It takes several minutes on first run. The SwiftPM test runner does not discover MLX's Metal shader bundle automatically, so stage the shaders after building the tests:
+
+- Run swift test; the integration test skips unless opted in.
+- Run Scripts/build-mlx-metallib.sh to compile and stage MLX Metal kernels.
+- Run REFINE_RUN_LOCAL_MODEL_INTEGRATION=1 swift test --filter LocalInferenceTests/testDownloadAndRunModelThenRunOffline.
+
+First launch: the notch appears as a small pill, or at the top center on a display without a notch. Choose Settings › Model › Download model, then optimize prompts. A workspace is optional. Add one from the workspace menu to include relevant project context. Download a speech model in Settings › Voice to dictate (hold Control-Option-D).
 
 ## Architecture
 
-```
-Sources/
-  RefineCore/                     Foundation-only library, fully unit-tested
-    PromptPlan.swift              PromptPlan, techniques, modes (the "what the user wants" model)
-    WorkspaceStore.swift          GRDB/SQLite persistence + migrations
-    Models/                       Workspace, Note, SavedPrompt, CodebaseGraph
-    PromptEngineering/            RequestAnalysis, TechniqueRegistry, LLMProvider (Gemini), PromptComposer, PromptOptimizer
-    Workspace/                    context retrieval, workspace.md generation, app paths
-    Architecture/                 HelperClient (process + protocol)
-    Workspace/                    WorkspaceAnalyzer, context retrieval, workspace.md generation, app paths
-    Agents/                       AgentAdapter interface + manual adapters
-    Security/                     Keychain
-  Refine/                         SwiftUI + AppKit app
-    App/                          entry point, AppDelegate, notch PanelController, Carbon HotKeyCenter, snapshots
-    ViewModels/                   AppModel, VoiceController, Preferences
-    Services/                     AudioRecorder (AVAudioEngine), SpeechTranscriber (WhisperKit)
-    Views/                        Notch, Prompts, Workspaces, Architecture, Settings
-RefineHelper/                     Node.js helper (TypeScript)
-  src/protocol/                   versioned JSON-lines protocol
-  src/analysis/                   walker, extractors (TS compiler API; Python/Swift/Prisma patterns), graph builder
-  src/git/                        read-only git (status, diff) with repo-config programs disabled
-SharedSchemas/                    JSON Schemas for the protocol and CodebaseGraph
-Tests/RefineCoreTests/            unit + integration tests
-```
+- RefineCore contains prompt plans, workspace models, context retrieval, persistence, and prompt engineering.
+- The SwiftUI and AppKit app contains the notch, settings, workspace views, and local model/audio services.
+- The Node.js / TypeScript helper performs local workspace analysis through a versioned JSON-lines protocol.
+- SharedSchemas contains the helper protocol and CodebaseGraph schema.
 
-Responsibilities are separated as the spec asks:
+The model layer is modular behind LLMProvider. Qwen3 returns a structured plan, and Refine validates tasks and dependencies, drops code references that cannot be confirmed in the selected workspace, then composes the final prompt locally. Invalid model output uses the deterministic local builder with a visible notice; model load/runtime failures are shown as errors. Matching prior results are cached.
 
-| Part | Does | Never does |
-| --- | --- | --- |
-| Static analyzer (helper) | Files, languages, frameworks, imports, symbols, routes, models, entry points | Execute repository code, read secrets |
-| Gemini 2.5 Flash | Intent, decomposition, constraints, criteria — as schema-validated JSON | See whole files; its paths are dropped unless the analyzer knows them |
-| Workspace analyzer | Extracts bounded project metadata for relevant prompt context | Execute repository code or read secrets |
+Prompt modes:
 
-### Prompt pipeline
+- Auto chooses a concise direct rewrite for simple prompts and more techniques as complexity rises.
+- Basic improves clarity and constraints without unnecessary expansion.
+- Advanced adds ordered implementation stages, dependencies, acceptance criteria, verification, and a bounded retry workflow.
+- Custom applies only the techniques selected in the editor.
 
-1. Intent extraction · 2. task classification · 3. context retrieval (top components by overlap and included notes; never whole files) · 4. technique selection (Auto/Basic/Advanced/Custom over 17 techniques) — all local and deterministic.
-5–7. One Gemini call with `responseSchema` returns tasks + dependencies, constraints, success criteria, confirmed requirements vs. suggested decisions, missing information, planned components. It is validated: required fields, unique task ids, known dependencies, no cycles, bounded sizes; file references the analyzer cannot confirm are removed. Repository content is wrapped as untrusted reference data.
-8. The prompt is composed locally and deterministically from the plan. 9. Intent preservation: identifiers, file names, routes, numbers and quoted strings from the request must survive; if not, the original request is quoted verbatim. 10. The plan (including the original prompt) is saved.
-
-Offline, rate-limited or invalid model output falls back to a local plan with a visible notice. An invalid API key is reported, not silently replaced. Identical inputs reuse the cached plan (no second model call).
-
-### Codebase graph
-
-Nodes are modules (directories, collapsed to ≤60; SwiftPM targets kept separate) plus notable external data/service dependencies. Edges carry evidence (`file:line`) and a verification status:
-
-- **confirmed** — resolved imports (relative, tsconfig aliases, monorepo packages, Python packages, SwiftPM targets) and imports of database packages.
-- **inferred** — Swift type-name references across modules; client `fetch`/`axios` paths matched to defined routes. Drawn dashed; never labelled confirmed.
-- Unresolvable local imports are reported as warnings.
-
-Analysis depth is reported per language: TypeScript/JavaScript are parsed with the TypeScript compiler (syntax); Python, Swift and Prisma use pattern extraction; everything else is counted, not analyzed.
-
-Excluded always: `.env*`, keys/certificates, credential and secret files, `node_modules`, build output, lockfiles, minified/generated files, binaries and files over 512 KB. In git repositories, `.gitignore` is respected.
-
-Incremental: a per-workspace file index (in Application Support) lets rescans skip unchanged files by size+mtime, and skip re-parsing unchanged content by SHA-256.
-
-### Workspace context
-
-Workspace files are scanned locally. Refine retrieves relevant component metadata, project notes, and bounded source references for each prompt.
+Workspace files are scanned locally. Refine retrieves bounded component metadata, matching symbols and paths, project notes, and user instructions; it does not send full repository files to a model. The analyzer excludes secrets, credential files, node_modules, generated/build output, binaries, and files over 512 KB. Workspace source is treated as untrusted reference data in the model prompt.
 
 ## Data and privacy
 
-- Everything lives in `~/Library/Application Support/Refine/` (`refine.sqlite`, `Workspaces/<id>/workspace.md` and `file-index.json`, `SpeechModels/`).
-- The Gemini key is stored in the Keychain.
-- Refine never writes to your repository. Removing a workspace deletes only Refine's records.
-- Dictation is recorded only while you hold the shortcut or after you click the mic, is transcribed on-device, and is never sent to a model automatically (the Optimize voice mode builds a local draft).
-
-## Agent integrations
-
-Agent destinations (Claude Code, Codex, Cursor, T3 Code, Zed, other) are labels for copy-and-paste hand-off. Refine does not monitor agent sessions.
+- App data is in the Refine Application Support folder: database, workspace summaries/indexes, speech models, and Qwen model.
+- Refine does not write to the selected repository. Removing a workspace deletes only Refine's records.
+- Dictation is recorded only while requested, transcribed on-device, and is never sent to the language model automatically.
+- Optimization uses selected workspace context and the local model only. Downloading model/speech weights is the only network setup step.
 
 ## Known limitations
 
-- Python/Swift analysis is pattern-based, not a full parser; Go, Rust, Java and others are not analyzed yet.
-- The app is ad-hoc signed and not sandboxed (the helper reads the selected folders directly); security-scoped bookmarks are stored for a future sandboxed build.
-- `--snapshot` cannot draw AppKit-backed controls (text editors, menus, segmented pickers), which appear as placeholders in the PNGs.
+- Python and Swift source analysis is pattern-based; Go, Rust, Java, and other languages are detected but not deeply analyzed.
+- The app is ad-hoc signed and not sandboxed; it reads only workspaces the user selects.
+- MLX inference is intended for Apple Silicon. The app reports a clear runtime error if the local model cannot be loaded.
 
 ## Third-party
 
-- [GRDB.swift](https://github.com/groue/GRDB.swift) (MIT) — SQLite.
-- [WhisperKit](https://github.com/argmaxinc/WhisperKit) (MIT) — on-device speech recognition.
-- [TypeScript](https://github.com/microsoft/TypeScript) (Apache-2.0) — parsing JS/TS (parser only).
+- MLX Swift LM (MIT): https://github.com/ml-explore/mlx-swift-lm
+- Qwen3 4B 4-bit (Apache-2.0): https://huggingface.co/mlx-community/Qwen3-4B-4bit
+- GRDB.swift (MIT): https://github.com/groue/GRDB.swift
+- WhisperKit (MIT): https://github.com/argmaxinc/WhisperKit
+- TypeScript (Apache-2.0): https://github.com/microsoft/TypeScript

@@ -55,16 +55,14 @@ public struct PromptOptimizer: Sendable {
         var modelPlan: ModelPlan?
         var providerID = "local"
         if let provider {
+            let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit))
             do {
-                let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit))
                 let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
                 modelPlan = valid
                 providerID = provider.identifier
                 if !dropped.isEmpty { notices.append("Removed \(dropped.count) file reference(s) the analyzer could not confirm: \(dropped.prefix(3).joined(separator: ", "))") }
-            } catch let error as LLMError where error != .invalidAPIKey {
-                notices.append("\(error.localizedDescription) Built locally instead.")
             } catch let error as ModelPlan.ValidationError {
-                notices.append("\(error.localizedDescription) Built locally instead.")
+                notices.append("The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
             }
         } else {
             notices.append("Built locally (no model configured).")

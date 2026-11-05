@@ -1,0 +1,173 @@
+import Foundation
+import Hub
+import MLXLLM
+import MLXLMCommon
+import Observation
+import RefineCore
+
+@Observable
+@MainActor
+final class LocalModelManager {
+    nonisolated static let modelID = "mlx-community/Qwen3-4B-4bit"
+    nonisolated static let modelLabel = "Qwen3 4B · 4-bit"
+
+    enum State: Equatable {
+        case notInstalled
+        case loading(progress: Double)
+        case ready
+        case generating
+        case failed(String)
+
+        var title: String {
+            switch self {
+            case .notInstalled: "Not downloaded"
+            case .loading(let progress): "Downloading and loading · \(Int(progress * 100))%"
+            case .ready: "Ready on this Mac"
+            case .generating: "Generating locally"
+            case .failed(let message): message
+            }
+        }
+    }
+
+    private(set) var state: State = .notInstalled
+    private(set) var downloadProgress: Double?
+    private var container: ModelContainer?
+    private var operationTask: Task<Void, Never>?
+    private var generationTask: Task<String, Error>?
+
+    private var modelCacheBase: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return support.appending(path: "Refine/Models", directoryHint: .isDirectory)
+    }
+
+    private var modelRepository: URL {
+        modelCacheBase.appending(path: "models/\(Self.modelID)", directoryHint: .isDirectory)
+    }
+
+    var isInstalled: Bool {
+        guard FileManager.default.fileExists(atPath: modelRepository.appending(path: "config.json").path) else { return false }
+        let enumerator = FileManager.default.enumerator(at: modelRepository, includingPropertiesForKeys: nil)
+        while let url = enumerator?.nextObject() as? URL {
+            if url.pathExtension == "safetensors" { return true }
+        }
+        return false
+    }
+
+    func install() async {
+        guard operationTask == nil else { return }
+        downloadProgress = 0
+        state = .loading(progress: 0)
+        operationTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try Task.checkCancellation()
+                let hub = HubApi(downloadBase: self.modelCacheBase, useOfflineMode: self.isInstalled)
+                let loaded = try await LLMModelFactory.shared.loadContainer(
+                    hub: hub,
+                    configuration: ModelConfiguration(id: Self.modelID)
+                ) { progress in
+                    let fraction = min(1, max(0, progress.fractionCompleted.isFinite ? progress.fractionCompleted : 0))
+                    Task { @MainActor [weak self] in
+                        self?.downloadProgress = fraction
+                        self?.state = .loading(progress: fraction)
+                    }
+                }
+                try Task.checkCancellation()
+                self.container = loaded
+                self.downloadProgress = nil
+                self.state = .ready
+            } catch is CancellationError {
+                self.downloadProgress = nil
+                self.state = .notInstalled
+            } catch {
+                self.downloadProgress = nil
+                self.state = .failed(error.localizedDescription)
+            }
+            self.operationTask = nil
+        }
+        await operationTask?.value
+    }
+
+    func cancel() {
+        operationTask?.cancel()
+        generationTask?.cancel()
+    }
+
+    func generate(_ prompt: String) async throws -> String {
+        if container == nil, isInstalled {
+            do {
+                let hub = HubApi(downloadBase: modelCacheBase, useOfflineMode: true)
+                container = try await LLMModelFactory.shared.loadContainer(
+                    hub: hub,
+                    configuration: ModelConfiguration(id: Self.modelID)
+                )
+            } catch {
+                let message = "Saved model could not be loaded offline. Verify this Mac has enough unified memory (allow about 8 GB free) and download the model again. \(error.localizedDescription)"
+                state = .failed(message)
+                throw LLMError.unavailable(message)
+            }
+        }
+        guard let container else { throw LLMError.modelNotInstalled }
+        state = .generating
+        defer { state = .ready }
+        do {
+            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 1200, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
+            let task = Task<String, Error> {
+                var result = ""
+                for try await chunk in session.streamResponse(to: prompt) {
+                    try Task.checkCancellation()
+                    result += chunk
+                }
+                return result
+            }
+            generationTask = task
+            defer { generationTask = nil }
+            return try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        } catch is CancellationError {
+            throw LLMError.cancelled
+        } catch {
+            throw LLMError.unavailable(error.localizedDescription)
+        }
+    }
+
+    func unload() {
+        guard operationTask == nil, generationTask == nil else { return }
+        container = nil
+        state = .notInstalled
+    }
+
+    func removeDownloadedModel() throws {
+        cancel()
+        container = nil
+        if FileManager.default.fileExists(atPath: modelRepository.path) {
+            try FileManager.default.removeItem(at: modelRepository)
+        }
+        state = .notInstalled
+    }
+}
+
+struct LocalLLMProvider: LLMProvider, @unchecked Sendable {
+    let manager: LocalModelManager
+    var identifier: String { LocalModelManager.modelID }
+
+    func plan(for request: OptimizationRequest) async throws -> ModelPlan {
+        let output = try await manager.generate(request.modelPrompt)
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let json: String
+        if let start = trimmed.firstIndex(of: "{"), let end = trimmed.lastIndex(of: "}") {
+            json = String(trimmed[start...end])
+        } else {
+            throw LLMError.invalidResponse("No JSON object was returned.")
+        }
+        do {
+            return try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+        } catch {
+            let excerpt = String(json.prefix(900))
+            throw LLMError.invalidResponse("\(error.localizedDescription) Response excerpt: \(excerpt)")
+        }
+    }
+}

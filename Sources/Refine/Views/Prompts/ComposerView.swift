@@ -62,10 +62,19 @@ struct ComposerView: View {
             }
 
             Spacer(minLength: Theme.Space.sm)
+            if model.isOptimizing {
+                HStack(spacing: Theme.Space.xs) {
+                    ProgressView().controlSize(.small).tint(Theme.text)
+                    Text("Running locally").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
             KeyHint(text: "⌘↩")
-            RButton(title: model.isOptimizing ? "Optimizing" : "Optimize", kind: .primary, loading: model.isOptimizing) { Task { await model.optimize() } }
+            RButton(title: model.isOptimizing ? "Cancel" : "Optimize", symbol: model.isOptimizing ? "xmark" : nil, kind: .primary) {
+                if model.isOptimizing { model.cancelOptimization() }
+                else { Task { await model.optimize() } }
+            }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!canOptimize)
+                .disabled(!canOptimize && !model.isOptimizing)
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
     }

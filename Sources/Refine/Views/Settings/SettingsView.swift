@@ -52,58 +52,59 @@ private struct SettingsSection<Content: View>: View {
 
 struct ModelSettings: View {
     let model: AppModel
-    @State private var apiKey = ""
-    @State private var hasKey = Preferences.keychain.read(Preferences.geminiAccount) != nil
-    @State private var modelName = Preferences.geminiModel
     @State private var iterations = Preferences.iterationLimit
-    @State private var status: String?
-    @State private var testing = false
+    @State private var managementError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
-            SettingsSection(title: "Gemini", footnote: "Only your request and a small, relevant slice of workspace context (component names, paths, symbols, notes you marked) are sent. Source files are never uploaded.") {
-                SettingsRow(title: "API key", detail: hasKey ? "Stored in your Keychain" : "Not set") {
-                    StatusIndicator(kind: hasKey ? .ready : .idle, label: hasKey ? "Connected" : "No key")
-                }
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    RTextField(placeholder: hasKey ? "Enter a new key to replace" : "Paste API key", text: $apiKey, secure: true)
-                    HStack(spacing: Theme.Space.sm) {
-                        RButton(title: "Save key", kind: .primary) {
-                            do { try Preferences.keychain.write(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), for: Preferences.geminiAccount); apiKey = ""; hasKey = true; status = "Saved to Keychain." }
-                            catch { status = error.localizedDescription }
+            SettingsSection(title: "On-device model", footnote: "Qwen3 4B, 4-bit quantized · about 2.3 GB download · Apache 2.0. Inference runs on this Mac. The model is stored in Application Support and can be used offline after its first download.") {
+                SettingsRow(title: LocalModelManager.modelLabel, detail: model.localModel.state.title) {
+                    if case .loading(let progress) = model.localModel.state {
+                        HStack(spacing: Theme.Space.sm) {
+                            ProgressView(value: progress).frame(width: 120).tint(Theme.text)
+                            Text("\(Int(progress * 100))%").font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
                         }
-                        .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
-                        RButton(title: "Test", loading: testing) { Task { await test() } }.disabled(!hasKey)
-                        RButton(title: "Remove", kind: .ghost) { try? Preferences.keychain.delete(Preferences.geminiAccount); hasKey = false; status = "Removed." }.disabled(!hasKey)
-                        Spacer()
+                    } else if model.localModel.state == .generating {
+                        StatusIndicator(kind: .busy, label: "Running")
+                    } else if model.localModel.state == .ready {
+                        StatusIndicator(kind: .ready, label: "Loaded")
+                    } else if model.localModel.isInstalled {
+                        StatusIndicator(kind: .ready, label: "Downloaded")
+                    } else {
+                        StatusIndicator(kind: .idle, label: "Not installed")
                     }
-                    if let status { Text(status).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled) }
                 }
-                .padding(14)
-                Hairline()
-                SettingsRow(title: "Model", divider: false) {
-                    RTextField(placeholder: "Model", text: $modelName, mono: true).frame(width: 200)
-                        .onChange(of: modelName) { Preferences.geminiModel = modelName }
+                HStack(spacing: Theme.Space.sm) {
+                    if case .loading = model.localModel.state {
+                        RButton(title: "Cancel download", kind: .secondary) { model.localModel.cancel() }
+                    } else if model.localModel.state == .generating {
+                        RButton(title: "Cancel generation", kind: .secondary) { model.cancelOptimization() }
+                    } else if model.localModel.state == .ready {
+                        RButton(title: "Unload from memory", kind: .secondary) { model.localModel.unload() }
+                    } else if model.localModel.isInstalled {
+                        RButton(title: "Load model", symbol: "arrow.clockwise") { Task { await model.localModel.install() } }
+                        RButton(title: "Remove", kind: .ghost) {
+                            do { try model.localModel.removeDownloadedModel(); managementError = nil }
+                            catch { managementError = error.localizedDescription }
+                        }
+                    } else {
+                        RButton(title: "Download model", symbol: "arrow.down.circle", kind: .primary) { Task { await model.localModel.install() } }
+                    }
+                    Spacer()
+                }
+                if case .failed(let message) = model.localModel.state {
+                    Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
+                }
+                if let managementError {
+                    Text(managementError).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
                 }
             }
-            SettingsSection(title: "Prompts") {
+            SettingsSection(title: "Prompts", footnote: "The local model may use a bounded verification loop in the instructions it generates.") {
                 SettingsRow(title: "Fix-loop attempts", detail: "How many times an agent may retry before stopping.", divider: false) {
                     Stepper("\(iterations)", value: $iterations, in: 1...10).onChange(of: iterations) { Preferences.iterationLimit = iterations }
                 }
             }
         }
-    }
-
-    func test() async {
-        testing = true
-        defer { testing = false }
-        guard let key = Preferences.keychain.read(Preferences.geminiAccount) else { return }
-        do {
-            let plan = try await GeminiProvider(apiKey: key, model: Preferences.geminiModel).plan(for: OptimizationRequest(
-                analysis: RequestAnalysis("Add a health check endpoint"), mode: .basic, techniques: [.structured],
-                context: RetrievedContext(workspaceName: "test", languages: [], frameworks: [], components: [], notes: [], analyzed: false), iterationLimit: 0))
-            status = "Working: \(Preferences.geminiModel) returned a valid plan (\(plan.tasks.count) tasks)."
-        } catch { status = error.localizedDescription }
     }
 }
 

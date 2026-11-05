@@ -32,6 +32,7 @@ final class AppModel {
 
     var banner: Banner?
     let voice = VoiceController()
+    let localModel = LocalModelManager()
 
     let store: WorkspaceStore
     private(set) var helper: HelperClient
@@ -184,34 +185,36 @@ final class AppModel {
 
     // MARK: Optimizing
 
-    func optimize(useModel: Bool = true, regenerate: Bool = false) async {
+    func optimize(regenerate: Bool = false) async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { show(PromptError.emptyInput.localizedDescription, .warning); return }
         guard !isOptimizing else { return }
         isOptimizing = true
         defer { isOptimizing = false }
         banner = nil
-        let key = useModel ? Preferences.keychain.read(Preferences.geminiAccount) : nil
-        let provider: (any LLMProvider)? = key.map { GeminiProvider(apiKey: $0, model: Preferences.geminiModel) }
+        let provider: (any LLMProvider)? = LocalLLMProvider(manager: localModel)
         let optimizer = PromptOptimizer(provider: provider)
         let input = PromptOptimizer.Input(text: text, mode: mode, customTechniques: customTechniques, workspace: current, graph: workspaceGraph,
                                           notes: notes, iterationLimit: Preferences.iterationLimit)
         do {
             // Identical inputs reuse the stored plan instead of calling the model again.
-            if provider != nil, !regenerate, let cached = try await store.cachedPlan(cacheKey: optimizer.cacheKey(for: input)), cached.provider != "local" {
+            if !regenerate, let cached = try await store.cachedPlan(cacheKey: optimizer.cacheKey(for: input)), cached.provider == LocalModelManager.modelID {
                 plan = cached
                 show("Reused the plan from an identical earlier request.")
             } else {
                 let result = try await optimizer.optimize(input)
                 try await store.save(result)
                 plan = result
-                if key == nil && useModel { show("Add a Gemini API key in Settings for model-assisted prompts. This one was built locally.", .warning) }
-                else if let notice = result.notices.first(where: { !$0.hasPrefix("Built locally (no model") }) { show(notice, .warning) }
+                if let notice = result.notices.first { show(notice, .warning) }
             }
             route = .result
         } catch {
-            show(error.localizedDescription, .error)
+            if (error as? LLMError) != .cancelled { show(error.localizedDescription, .error) }
         }
+    }
+
+    func cancelOptimization() {
+        localModel.cancel()
     }
 
     func copy(_ text: String) {
@@ -228,6 +231,6 @@ final class AppModel {
         input = input.isEmpty ? processed : input + (input.hasSuffix(" ") || input.hasSuffix("\n") ? "" : " ") + processed
         route = .compose
         onExpand()
-        if mode == .optimize { Task { await optimize(useModel: false) } }
+        if mode == .optimize { Task { await optimize() } }
     }
 }
