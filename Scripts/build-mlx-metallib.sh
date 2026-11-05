@@ -30,6 +30,7 @@ mkdir -p "$DEST_DIR" "$BIN_DIR"
 cp "$METALLIB" "$DEST_DIR/mlx.metallib"
 cp "$METALLIB" "$BIN_DIR/mlx.metallib"
 
-TEST_BUNDLE="$BIN_DIR/RefinePackageTests.xctest/Contents/MacOS"
-if [ -d "$TEST_BUNDLE" ]; then cp "$METALLIB" "$TEST_BUNDLE/mlx.metallib"; fi
+for TEST_BUNDLE in "$BIN_DIR"/*PackageTests.xctest/Contents/MacOS; do
+  [ -d "$TEST_BUNDLE" ] && cp "$METALLIB" "$TEST_BUNDLE/mlx.metallib"
+done
 echo "Staged MLX Metal kernels at $DEST_DIR/mlx.metallib"

@@ -1,4 +1,4 @@
-# Refine — Project Memory
+# Refyn — Project Memory
 
 Working memory for anyone (human or AI agent) picking up this project. It records what exists, why it is
 built this way, what was verified, the gotchas, and what is left. Keep it current: update it when you change
@@ -6,7 +6,7 @@ behavior, add a milestone, or discover a pitfall. Last updated: 2026-11-05.
 
 ---
 
-## 1. What Refine is
+## 1. What Refyn is
 
 A native macOS app that lives in the MacBook notch and helps developers working with AI coding agents
 (Claude Code, Codex, Cursor, T3 Code, Zed):
@@ -24,7 +24,7 @@ session. Its hard rules are listed in §4.
 ## 2. Repository and environment
 
 - GitHub: https://github.com/Youseph-Elkhouly/Refyn (remote `origin`, branch `main`). The repo is named "Refyn";
-  the product and code are named "Refine".
+  the product is branded Refyn; the existing RefineCore module name remains.
 - Local path: `/Users/youseph.e/Desktop/PROMPTBUILDER`.
 - History: `62e57c6 Starting point` (the user's initial scaffold: Package.swift, a single-file main.swift prototype,
   PromptPlan.swift, WorkspaceStore.swift, one test file), then `0196e8b Build Refine…` (the full implementation).
@@ -35,17 +35,17 @@ session. Its hard rules are listed in §4.
 ## 3. How to build, run, test
 
 ```sh
-Scripts/build-app.sh [release|debug]       # npm ci + tsc for the helper, swift build, assemble .build/Refine.app, ad-hoc codesign
-open .build/Refine.app
+Scripts/build-app.sh [release|debug]       # npm ci + tsc for the helper, swift build, assemble .build/Refyn.app, ad-hoc codesign
+open .build/Refyn.app
 (cd RefineHelper && npm ci && npm test)    # helper: tsc + node --test dist/test/*.test.js  (7 tests)
 swift build && swift test                  # 25 tests (3 integration tests need Node + built helper; otherwise they XCTSkip)
-.build/debug/Refine --snapshot <dir>       # renders collapsed/compose/result/custom states to PNG, then exits
-osascript -e 'quit app "Refine"'           # quit the running app before rebuilding/relaunching
+.build/debug/Refyn --snapshot <dir>       # renders collapsed/compose/result/custom states to PNG, then exits
+osascript -e 'quit app "Refyn"'           # quit the running app before rebuilding/relaunching
 ```
 
 - Run from the `.app` for dictation: the bundle's Info.plist carries `NSMicrophoneUsageDescription`. Unbundled
-  `.build/debug/Refine` works for everything else.
-- `REFINE_SUPPORT_DIR` overrides `~/Library/Application Support/Refine` (used by the integration tests).
+  `.build/debug/Refyn` works for everything else.
+- `REFINE_SUPPORT_DIR` overrides `~/Library/Application Support/Refyn` (used by the integration tests).
 - `REFINE_HELPER_DIR` points the app at a helper checkout (the folder containing `dist/src/main.js`).
 
 ## 4. Non-negotiable product rules (from the brief)
@@ -87,7 +87,7 @@ Sources/RefineCore/   (Foundation-only library; everything testable lives here)
   Agents/AgentAdapter.swift           AgentCapabilities, AgentAdapter, ManualAgentAdapter, AgentRegistry
   Security/Keychain.swift             generic-password wrapper
 
-Sources/Refine/       (the app; SwiftUI + AppKit; @MainActor)
+Sources/Refyn/       (the app; SwiftUI + AppKit; @MainActor)
   main.swift                          manual NSApplication bootstrap (accessory policy) + `--snapshot` mode
   App/AppDelegate.swift               wiring: model, panel, status item, hotkeys, Settings window, AppActions
   App/PanelController.swift           NotchPanel (NSPanel, canBecomeKey) placement, expand/collapse, focus restore
@@ -99,7 +99,7 @@ Sources/Refine/       (the app; SwiftUI + AppKit; @MainActor)
   ViewModels/Preferences.swift        UserDefaults-backed settings, VoiceMode
   Services/Audio/AudioRecorder        AVAudioEngine tap → 16 kHz mono Float via AVAudioConverter, RMS levels
   Services/Transcription/SpeechTranscriber  actor wrapping WhisperKit 0.14.1 (download, load, transcribe)
-  Views/Theme.swift                   monochrome design system: tokens (Theme.*, Space, Radius, Motion), RefineMark, RButton/RefineButtonStyle,
+  Views/Theme.swift                   monochrome design system: tokens (Theme.*, Space, Radius, Motion), RefynMark, RButton/RefynButtonStyle,
                                       IconButton, RTextField, REditor, SearchField, Segmented, RToggle, SectionHeader, SettingsGroup/Row,
                                       StatusIndicator, EmptyState, LoadingState, Chip, KeyHint, Waveform, .motion() (honors Reduce Motion)
   Views/Notch/                        NotchRootView (+ CollapsedPill), ExpandedPanelView (+ header, BannerView, WorkspaceMenu)
@@ -127,13 +127,13 @@ Scripts/build-app.sh  app bundle assembly
 ```
 
 Project layout note: the brief suggested `RefineApp/…` folders with an Xcode project; we kept **SwiftPM**
-(`Sources/Refine`, `Sources/RefineCore`) to match the user's starting scaffold and allow command-line builds. The
+(`Sources/Refyn`, `Sources/RefineCore`) to match the user's starting scaffold and allow command-line builds. The
 `.app` is assembled by `Scripts/build-app.sh`.
 
 ## 6. Key design decisions (and why)
 
 ### Persistence (GRDB/SQLite)
-- One DB: `~/Library/Application Support/Refine/refine.sqlite`. Migrations:
+- One DB: `~/Library/Application Support/Refyn/refine.sqlite`. Migrations:
   - `create-workspaces-and-prompts` — kept **byte-for-byte compatible** with the user's original scaffold so any DB
     created by the prototype still migrates.
   - `v2-notes-plans-architecture-executions` — adds `savedPrompts.updatedAt/planID`, tables `notes`,
@@ -142,7 +142,7 @@ Project layout note: the brief suggested `RefineApp/…` folders with an Xcode p
 - Complex objects are stored as JSON blobs (dates as secondsSince1970). Note: Date round-trips lose sub-ms precision,
   so tests compare dates with accuracy instead of `==` on whole plans.
 - Foreign keys are on; deleting a workspace cascades to all its rows and also deletes
-  `Application Support/Refine/Workspaces/<id>/` (Refine's own metadata only).
+  `Application Support/Refyn/Workspaces/<id>/` (Refine's own metadata only).
 
 ### Prompt pipeline (PromptOptimizer.optimize)
 1–4 are local and deterministic: `RequestAnalysis` → `ContextRetriever.retrieve` (top ≤6 components by token
@@ -265,7 +265,7 @@ id, "v1"); the app reuses a cached **model-built** plan for identical inputs.
   then `optimize(useModel: false)`, i.e. a local draft; nothing is sent to Gemini automatically).
 - WhisperKit **0.14.1** (0.x avoids the 1.x Vapor/server dependency tree; builds with Xcode 16.0). Models
   `openai_whisper-{tiny,base,small}.en` are downloaded only from Settings › Voice into
-  `Application Support/Refine/SpeechModels`. Loaded with `download: false`. Presses shorter than 0.35 s are ignored.
+  `Application Support/Refyn/SpeechModels`. Loaded with `download: false`. Presses shorter than 0.35 s are ignored.
 
 ### Agents
 - `AgentRegistry`: Claude Code, Codex, Cursor, T3 Code, Zed, Other — all `ManualAgentAdapter` with no
@@ -281,7 +281,7 @@ id, "v1"); the app reuses a cached **model-built** plan for identical inputs.
   run the real Node helper against a git-initialized copy of the fixture: scan → unchanged rescan reuses → dirty
   baseline file not attributed → review → confirm v2 → workspace.md updated → render; reject keeps verified;
   helper restart.
-- `Scripts/build-app.sh release` produces a 40 MB `.build/Refine.app`. It launches, creates the DB, and places the
+- `Scripts/build-app.sh release` produces a 40 MB `.build/Refyn.app`. It launches, creates the DB, and places the
   panel over the notch (checked via CGWindowList).
 - UI checked via `--snapshot` PNGs (layout, header, buttons, notch band). **Limitation:** ImageRenderer draws
   AppKit-backed controls (TextEditor, Menu, segmented Picker, ScrollView) as yellow placeholders, and
@@ -335,7 +335,7 @@ id, "v1"); the app reuses a cached **model-built** plan for identical inputs.
 - Palette is grayscale only: bg #090909, surface #141414, input #1B1B1B, border #292929, hover #242424, text #FFF / #A1A1A1 / #666,
   primary button white on #090909. No accent, gradient, or semantic colors: state is conveyed by symbols, weight and text.
 - All styling goes through `Theme` tokens and the components in `Views/Theme.swift`; do not hardcode colors/sizes in views.
-- Notch: collapsed = black pill with the `RefineMark` + status dot; expanded = header (wordmark, workspace menu, notes/saved/settings),
+- Notch: collapsed = black pill with the `RefynMark` + status dot; expanded = header (wordmark, workspace menu, notes/saved/settings),
   borderless editor ("What are you working on?"), controls (mic, mode segmented, ⌘↩ Optimize). Custom-mode techniques live in a popover to avoid layout jumps.
 - Result view shows the original request above the optimized prompt; actions: Copy, Save, Regenerate (skips the plan cache), agent menu, review, new.
 - Draft (`model.input`) is never cleared by navigation; only "New prompt" in the result view clears it. Info banners auto-dismiss after 4 s.

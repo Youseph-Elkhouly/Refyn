@@ -10,8 +10,14 @@ public struct TechniqueRegistry: Sendable {
         case .custom:
             return PromptTechnique.allCases.filter { custom.contains($0) }
         case .basic:
-            out = [.structured, .constraints, .outputFormat]
-            if hasContext { out.append(.contextInjection) }
+            if analysis.complexity < 2 {
+                out = [.zeroShot]
+                if hasContext { out.append(.contextInjection) }
+                if !analysis.constraints.isEmpty { out.append(.constraints) }
+            } else {
+                out = [.structured, .constraints, .outputFormat]
+                if hasContext { out.append(.contextInjection) }
+            }
         case .advanced:
             out = [.role, .structured, .constraints, .decomposition, .dependencyPlanning, .multiStage, .verification,
                    .acceptanceCriteria, .boundedIteration, .selfCritique, .toolUse, .outputFormat]

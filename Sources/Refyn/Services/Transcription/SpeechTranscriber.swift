@@ -22,7 +22,7 @@ enum TranscriberError: Error, LocalizedError {
 }
 
 /// Local speech-to-text with WhisperKit. Audio never leaves the Mac. Models are downloaded only
-/// when the user asks, into Application Support/Refine/SpeechModels.
+/// when the user asks, into Application Support/Refyn/SpeechModels.
 actor SpeechTranscriber {
     private var kit: WhisperKit?
     private var loadedModel: String?

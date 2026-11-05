@@ -77,8 +77,8 @@ extension View {
 
 // MARK: - Mark
 
-/// The Refine symbol: a ring around a solid core.
-struct RefineMark: View {
+/// The Refyn symbol: a ring around a solid core.
+struct RefynMark: View {
     var size: CGFloat = 12
     var color: Color = Theme.text
     var body: some View {
@@ -95,7 +95,7 @@ struct RefineMark: View {
 
 enum ButtonKind { case primary, secondary, ghost }
 
-struct RefineButtonStyle: ButtonStyle {
+struct RefynButtonStyle: ButtonStyle {
     var kind: ButtonKind = .secondary
     var loading = false
 
@@ -161,7 +161,7 @@ struct RButton: View {
                 Text(title)
             }
         }
-        .buttonStyle(RefineButtonStyle(kind: kind, loading: loading))
+        .buttonStyle(RefynButtonStyle(kind: kind, loading: loading))
         .disabled(loading)
     }
 }

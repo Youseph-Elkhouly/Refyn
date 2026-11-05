@@ -2,7 +2,7 @@ import AppKit
 import RefineCore
 import SwiftUI
 
-/// `Refine --snapshot <dir>` renders the panel's main states to PNGs and exits. Used to check the UI
+/// `Refyn --snapshot <dir>` renders the panel's main states to PNGs and exits. Used to check the UI
 /// without screen-recording permission; it uses a throwaway database and never touches real data.
 @MainActor
 enum Snapshots {

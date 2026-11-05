@@ -6,6 +6,8 @@ struct ResultView: View {
     enum Tab: String, CaseIterable { case prompt = "Prompt", plan = "Plan" }
     @State private var tab: Tab = .prompt
     @State private var stage = -1
+    @State private var isEditing = false
+    @State private var editedText = ""
 
     var body: some View {
         if let plan = model.plan {
@@ -17,7 +19,16 @@ struct ResultView: View {
                     ScrollView {
                         Group {
                             switch tab {
-                            case .prompt: Text(currentText(plan)).font(Theme.mono).lineSpacing(Theme.lineSpacing)
+                            case .prompt:
+                                if isEditing {
+                                    TextEditor(text: $editedText)
+                                        .font(Theme.mono)
+                                        .scrollContentBackground(.hidden)
+                                        .foregroundStyle(Theme.text)
+                                        .accessibilityLabel("Edit optimized prompt")
+                                } else {
+                                    Text(currentText(plan)).font(Theme.mono).lineSpacing(Theme.lineSpacing)
+                                }
                             case .plan: PlanDetails(plan: plan)
                             }
                         }
@@ -33,7 +44,7 @@ struct ResultView: View {
                 Hairline()
                 actions(plan)
             }
-            .onChange(of: plan.id) { stage = -1; tab = .prompt }
+            .onChange(of: plan.id) { stage = -1; tab = .prompt; isEditing = false; editedText = "" }
         } else {
             EmptyState(symbol: "text.append", title: "No prompt yet", detail: "Write a request and choose Optimize.", actionTitle: "Open editor") { model.route = .compose }
         }
@@ -59,7 +70,7 @@ struct ResultView: View {
                     Segmented(options: [-1] + Array(plan.chainedPrompts.indices), selection: $stage) { $0 < 0 ? "Full" : "Step \($0 + 1)" }
                 }
                 Spacer()
-                Chip(text: plan.provider == "local" ? "Local draft" : plan.provider)
+                Chip(text: plan.provider == "local" ? "Local rules" : plan.provider == LocalModelManager.modelID ? "Qwen3 · on-device" : plan.provider)
                 Chip(text: plan.taskType.rawValue)
                 if !plan.validation.passed {
                     Chip(text: plan.validation.repaired ? "Original quoted" : "Check intent")
@@ -77,7 +88,15 @@ struct ResultView: View {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .help("Copy the prompt (⇧⌘C)")
             RButton(title: "Save", symbol: "bookmark") { Task { await model.savePrompt() } }
-            RButton(title: "Regenerate", symbol: "arrow.clockwise", loading: model.isOptimizing) { Task { await model.optimize(regenerate: true) } }
+            RButton(title: isEditing ? "Done" : "Edit output", symbol: isEditing ? "checkmark" : "pencil") {
+                if isEditing { saveEditedText() }
+                else { editedText = currentText(plan); isEditing = true }
+            }
+                .disabled(model.isOptimizing || tab != .prompt)
+            RButton(title: model.isOptimizing ? "Cancel" : "Regenerate", symbol: model.isOptimizing ? "xmark" : "arrow.clockwise") {
+                if model.isOptimizing { model.cancelOptimization() }
+                else { Task { await model.optimize(regenerate: true) } }
+            }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .help("Build the prompt again (⇧⌘R)")
             Spacer()
@@ -100,6 +119,14 @@ struct ResultView: View {
     func currentText(_ plan: PromptPlan) -> String {
         if tab == .prompt, plan.chainedPrompts.indices.contains(stage) { return plan.chainedPrompts[stage] }
         return plan.optimizedPrompt
+    }
+
+    func saveEditedText() {
+        guard var updated = model.plan else { return }
+        if updated.chainedPrompts.indices.contains(stage) { updated.chainedPrompts[stage] = editedText }
+        else { updated.optimizedPrompt = editedText }
+        model.plan = updated
+        isEditing = false
     }
 }
 

@@ -110,7 +110,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func toggle() { model.isExpanded ? collapse() : expand() }
 
-    /// Gives Refine's regular windows the screen and keyboard focus. The notch panel is a
+    /// Gives Refyn's regular windows the screen and keyboard focus. The notch panel is a
     /// status-bar-level window, so merely ordering a regular window forward would leave it
     /// above that window. Hide it until the secondary window closes.
     func prepareForSecondaryWindow() {
@@ -137,7 +137,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         guard Preferences.collapseOnFocusLoss, !suppressAutoCollapse, model.isExpanded else { return }
-        // Collapse when focus moves from the panel to any other window. Refine's own
+        // Collapse when focus moves from the panel to any other window. Refyn's own
         // secondary windows explicitly hide the panel before they are activated.
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.suppressAutoCollapse, self.model.isExpanded,

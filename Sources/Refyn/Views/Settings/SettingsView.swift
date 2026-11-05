@@ -117,7 +117,7 @@ struct ShortcutSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
             SettingsSection(title: "Global shortcuts", footnote: "Shortcuts work in every app and need no Accessibility permission.") {
-                SettingsRow(title: "Open or collapse Refine") { ShortcutRecorder(shortcut: $toggle) }
+                SettingsRow(title: "Open or collapse Refyn") { ShortcutRecorder(shortcut: $toggle) }
                 SettingsRow(title: "Hold to dictate", divider: false) { ShortcutRecorder(shortcut: $talk) }
             }
             SettingsSection(title: "Panel") {
@@ -137,7 +137,7 @@ struct ShortcutRecorder: View {
 
     var body: some View {
         Button(recording ? "Press keys…" : shortcut.display) { recording ? stop() : start() }
-            .buttonStyle(RefineButtonStyle(kind: .secondary))
+            .buttonStyle(RefynButtonStyle(kind: .secondary))
             .frame(minWidth: 110)
             .help(recording ? "Press Escape to cancel" : "Click to record a new shortcut")
             .onDisappear(perform: stop)

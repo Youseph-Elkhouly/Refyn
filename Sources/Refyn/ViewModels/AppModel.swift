@@ -105,7 +105,7 @@ final class AppModel {
     func remove(_ workspace: Workspace) async {
         do {
             try await store.remove(workspace.id)
-            show("Removed \(workspace.name) from Refine. The folder itself was not touched.")
+            show("Removed \(workspace.name) from Refyn. The folder itself was not touched.")
         } catch { show(error.localizedDescription, .error) }
         await reloadWorkspaces()
         if current?.id == workspace.id {

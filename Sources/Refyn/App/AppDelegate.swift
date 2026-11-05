@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model = AppModel(store: try WorkspaceStore())
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Refine could not open its database"
+            alert.messageText = "Refyn could not open its database"
             alert.informativeText = error.localizedDescription
             alert.runModal()
             NSApp.terminate(nil)
@@ -43,13 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Refine")
+        statusItem.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Refyn")
         let menu = NSMenu()
-        menu.addItem(item("Open Refine", #selector(openPanel), ""))
+        menu.addItem(item("Open Refyn", #selector(openPanel), ""))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(openSettings), ","))
         menu.addItem(.separator())
-        menu.addItem(item("Quit Refine", #selector(quit), "q"))
+        menu.addItem(item("Quit Refyn", #selector(quit), "q"))
         statusItem.menu = menu
     }
 
@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             open.canChooseFiles = false
             open.allowsMultipleSelection = false
             open.prompt = "Add Workspace"
-            open.message = "Choose a project folder. Refine reads it but never changes it."
+            open.message = "Choose a project folder. Refyn reads it but never changes it."
             return open.runModal() == .OK ? open.url : nil
         }
     }

@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "Refine",
+    name: "Refyn",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "Refine", targets: ["Refine"]),
+        .executable(name: "Refyn", targets: ["Refyn"]),
         .library(name: "RefineCore", targets: ["RefineCore"]),
     ],
     dependencies: [
@@ -17,7 +17,7 @@ let package = Package(
     targets: [
         .target(name: "RefineCore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
         .executableTarget(
-            name: "Refine",
+            name: "Refyn",
             dependencies: [
                 "RefineCore",
                 .product(name: "WhisperKit", package: "WhisperKit"),
@@ -27,6 +27,6 @@ let package = Package(
             ]
         ),
         .testTarget(name: "RefineCoreTests", dependencies: ["RefineCore", .product(name: "GRDB", package: "GRDB.swift")]),
-        .testTarget(name: "RefineLocalInferenceTests", dependencies: ["Refine", "RefineCore"]),
+        .testTarget(name: "RefineLocalInferenceTests", dependencies: ["Refyn", "RefineCore"]),
     ]
 )

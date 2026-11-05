@@ -1,12 +1,12 @@
 #!/bin/sh
-# Builds Refine.app: the Swift app, plus the Node helper (compiled, with production dependencies) in Resources.
+# Builds Refyn.app: the Swift app, plus the Node helper (compiled, with production dependencies) in Resources.
 # Usage: Scripts/build-app.sh [debug|release]   (default: release)
 set -eu
 
 CONFIG=${1:-release}
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BUILD_DIR="$ROOT_DIR/.build/$CONFIG"
-APP_DIR="$ROOT_DIR/.build/Refine.app"
+APP_DIR="$ROOT_DIR/.build/Refyn.app"
 RES_DIR="$APP_DIR/Contents/Resources"
 
 cd "$ROOT_DIR"
@@ -22,7 +22,7 @@ echo "› Building MLX Metal kernels"
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$RES_DIR/RefineHelper"
-cp "$BUILD_DIR/Refine" "$APP_DIR/Contents/MacOS/Refine"
+cp "$BUILD_DIR/Refyn" "$APP_DIR/Contents/MacOS/Refyn"
 cp "$BUILD_DIR/mlx.metallib" "$APP_DIR/Contents/MacOS/mlx.metallib"
 # SwiftPM resource bundles (GRDB, WhisperKit dependencies).
 for bundle in "$BUILD_DIR"/*.bundle; do
@@ -39,16 +39,16 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key><string>Refine</string>
-    <key>CFBundleIdentifier</key><string>com.refine.prompt-assistant</string>
-    <key>CFBundleName</key><string>Refine</string>
-    <key>CFBundleDisplayName</key><string>Refine</string>
+    <key>CFBundleExecutable</key><string>Refyn</string>
+    <key>CFBundleIdentifier</key><string>com.refyn.prompt-assistant</string>
+    <key>CFBundleName</key><string>Refyn</string>
+    <key>CFBundleDisplayName</key><string>Refyn</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
-    <key>NSMicrophoneUsageDescription</key><string>Refine records your voice only while you hold the dictation shortcut or press the microphone button, and transcribes it on this Mac.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Refyn records your voice only while you hold the dictation shortcut or press the microphone button, and transcribes it on this Mac.</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

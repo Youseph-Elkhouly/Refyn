@@ -43,10 +43,10 @@ struct CollapsedPill: View {
     var body: some View {
         Button { model.onExpand() } label: {
             HStack(spacing: 8) {
-                RefineMark(size: 12, color: hovering ? Theme.text : Theme.textSecondary)
+                RefynMark(size: 12, color: hovering ? Theme.text : Theme.textSecondary)
                     .scaleEffect(hovering ? 1.1 : 1)
                 if !geometry.hasNotch {
-                    Text(model.current?.name ?? "Refine").font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    Text(model.current?.name ?? "Refyn").font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 Spacer(minLength: geometry.hasNotch ? geometry.notchWidth : 4)
                 status
@@ -59,8 +59,8 @@ struct CollapsedPill: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .motion(Theme.Motion.base, value: hovering)
-        .help(model.current.map { "Refine — \($0.name)" } ?? "Refine")
-        .accessibilityLabel("Open Refine")
+        .help(model.current.map { "Refyn — \($0.name)" } ?? "Refyn")
+        .accessibilityLabel("Open Refyn")
     }
 
     @ViewBuilder var status: some View {

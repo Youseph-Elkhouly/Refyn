@@ -54,15 +54,18 @@ public struct PromptOptimizer: Sendable {
         var notices: [String] = []
         var modelPlan: ModelPlan?
         var providerID = "local"
+        let directRewrite = techniques.contains(.zeroShot) && techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
         if let provider {
-            let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit))
-            do {
-                let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
-                modelPlan = valid
-                providerID = provider.identifier
-                if !dropped.isEmpty { notices.append("Removed \(dropped.count) file reference(s) the analyzer could not confirm: \(dropped.prefix(3).joined(separator: ", "))") }
-            } catch let error as ModelPlan.ValidationError {
-                notices.append("The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
+            if !directRewrite {
+                let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit))
+                do {
+                    let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
+                    modelPlan = valid
+                    providerID = provider.identifier
+                    if !dropped.isEmpty { notices.append("Removed \(dropped.count) file reference(s) the analyzer could not confirm: \(dropped.prefix(3).joined(separator: ", "))") }
+                } catch let error as ModelPlan.ValidationError {
+                    notices.append("The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
+                }
             }
         } else {
             notices.append("Built locally (no model configured).")
@@ -124,6 +127,10 @@ public struct PromptOptimizer: Sendable {
 
     /// The offline plan: everything here comes from the request text and the analyzer, nothing invented.
     static func localPlan(analysis: RequestAnalysis, context: RetrievedContext) -> PromptPlan {
+        if analysis.complexity < 2 {
+            return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType,
+                              constraints: analysis.constraints, confirmedRequirements: [analysis.intent])
+        }
         let refs = context.components.prefix(5).map { CodeReference(path: $0.path, symbol: nil, reason: "\($0.type) module matching the request", source: .graph) }
         let tasks: [PlanTask]
         switch analysis.taskType {

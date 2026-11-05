@@ -97,9 +97,20 @@ final class PromptEngineeringTests: XCTestCase {
 
     func testLocalModelFailureIsVisibleInsteadOfSilentlyFallingBack() async {
         do {
-            _ = try await PromptOptimizer(provider: StubProvider(result: .failure(.modelNotInstalled))).optimize(.init(text: "fix login bug", mode: .basic))
+            _ = try await PromptOptimizer(provider: StubProvider(result: .failure(.modelNotInstalled))).optimize(.init(text: "fix login bug", mode: .advanced))
             XCTFail("A missing local model must be reported")
         } catch { XCTAssertEqual(error as? LLMError, .modelNotInstalled) }
+    }
+
+    func testSimpleAutoAndBasicRequestsStayConciseWithoutLoadingTheModel() async throws {
+        let unavailable = StubProvider(result: .failure(.modelNotInstalled))
+        for mode in [PromptMode.auto, .basic] {
+            let plan = try await PromptOptimizer(provider: unavailable).optimize(.init(text: "Rename Save to Continue", mode: mode))
+            XCTAssertEqual(plan.selectedTechniques, [.zeroShot])
+            XCTAssertEqual(plan.optimizedPrompt, "Rename Save to Continue")
+            XCTAssertTrue(plan.tasks.isEmpty)
+            XCTAssertEqual(plan.provider, "local")
+        }
     }
 
     func testChainingProducesOrderedStandalonePrompts() async throws {

@@ -230,7 +230,7 @@ public actor HelperClient {
             if fm.fileExists(atPath: url.path) { return url }
         }
         if let bundled = Bundle.main.resourceURL?.appending(path: "RefineHelper/dist/src/main.js"), fm.fileExists(atPath: bundled.path) { return bundled }
-        // Development: walk up from the executable (.build/debug/Refine) to the repository.
+        // Development: walk up from the executable (.build/debug/Refyn) to the repository.
         var dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         for _ in 0..<6 {
             let candidate = dir.appending(path: "RefineHelper/dist/src/main.js")

@@ -73,9 +73,9 @@ public enum PromptComposer {
         }
         if t.contains(.fewShot) {
             let example = parts.exampleReport?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? """
-            Changed: src/api/users.ts — added pagination params to GET /users
-            Tests: npm test -- users (12 passed)
-            Assumptions: page size defaults to 20
+            Changed: <file> — describe the requested change
+            Tests: <command> — report the actual result
+            Assumptions: <only those needed to proceed>
             Unresolved: none
             """
             s.append(section("Example report", "```\n\(example)\n```"))

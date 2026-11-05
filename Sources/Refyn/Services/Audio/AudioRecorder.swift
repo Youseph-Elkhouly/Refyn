@@ -4,7 +4,7 @@ enum AudioRecorderError: Error, LocalizedError {
     case permissionDenied, noInput, converterUnavailable
     var errorDescription: String? {
         switch self {
-        case .permissionDenied: "Microphone access is off. Allow Refine in System Settings › Privacy & Security › Microphone."
+        case .permissionDenied: "Microphone access is off. Allow Refyn in System Settings › Privacy & Security › Microphone."
         case .noInput: "No microphone is available."
         case .converterUnavailable: "Could not prepare audio for transcription."
         }

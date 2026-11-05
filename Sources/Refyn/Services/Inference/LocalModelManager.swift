@@ -36,8 +36,7 @@ final class LocalModelManager {
     private var generationTask: Task<String, Error>?
 
     private var modelCacheBase: URL {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appending(path: "Refine/Models", directoryHint: .isDirectory)
+        AppPaths.supportDirectory.appending(path: "Models", directoryHint: .isDirectory)
     }
 
     private var modelRepository: URL {
@@ -111,7 +110,7 @@ final class LocalModelManager {
         state = .generating
         defer { state = .ready }
         do {
-            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 1200, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
+            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 900, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
             let task = Task<String, Error> {
                 var result = ""
                 for try await chunk in session.streamResponse(to: prompt) {

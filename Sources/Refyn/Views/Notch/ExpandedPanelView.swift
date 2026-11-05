@@ -31,13 +31,13 @@ struct ExpandedPanelView: View {
         HStack(spacing: Theme.Space.sm) {
             Button { model.route = model.plan != nil && model.route == .compose ? .result : .compose } label: {
                 HStack(spacing: 7) {
-                    RefineMark(size: 12)
-                    Text("Refine").font(Theme.title)
+                    RefynMark(size: 12)
+                    Text("Refyn").font(Theme.title)
                 }
             }
             .buttonStyle(.plain)
             .help(model.route == .compose ? "Back to the last result" : "Back to the editor")
-            .accessibilityLabel("Refine")
+            .accessibilityLabel("Refyn")
             .disabled(model.route == .compose && model.plan == nil)
 
             Rectangle().fill(Theme.border).frame(width: 1, height: 14)
@@ -95,7 +95,7 @@ struct WorkspaceMenu: View {
                 Button("Re-analyze \(ws.name)") { Task { await model.analyze() } }
                 Button("Rename \(ws.name)…") { newName = ws.name; renaming = ws }
                 Divider()
-                Button("Remove \(ws.name) from Refine", role: .destructive) { Task { await model.remove(ws) } }
+                Button("Remove \(ws.name) from Refyn", role: .destructive) { Task { await model.remove(ws) } }
             }
         } label: {
             HStack(spacing: 5) {
