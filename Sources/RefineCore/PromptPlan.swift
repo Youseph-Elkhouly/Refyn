@@ -8,117 +8,151 @@ public enum PromptMode: String, Codable, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
+public enum TaskType: String, Codable, CaseIterable, Sendable {
+    case feature, bugfix, refactor, test, docs, performance, ui, investigation, config, other
+}
+
+/// Techniques the optimizer can apply. Each one changes what the generated prompt asks of the coding agent.
 public enum PromptTechnique: String, Codable, CaseIterable, Identifiable, Sendable {
     case zeroShot = "Zero-shot"
-    case roleContext = "Role and context"
-    case structured = "Structured output"
+    case role = "Role prompting"
+    case contextInjection = "Context injection"
+    case structured = "Structured instructions"
+    case outputFormat = "Output formatting"
+    case constraints = "Constraint specification"
     case fewShot = "Few-shot examples"
     case decomposition = "Task decomposition"
-    case concisePlanning = "Observable task steps"
-    case selfCritique = "Self-critique"
-    case boundedIteration = "Bounded iteration"
+    case promptChaining = "Prompt chaining"
+    case selfCritique = "Self-critique and revision"
+    case boundedIteration = "Bounded iterative loop"
     case conditionalBranching = "Conditional branching"
-    case reactWorkflow = "Tool-use workflow"
     case verification = "Verification-driven"
+    case toolUse = "ReAct-style tool use"
     case multiStage = "Multi-stage workflow"
+    case dependencyPlanning = "Dependency-aware planning"
+    case acceptanceCriteria = "Acceptance criteria"
+
     public var id: String { rawValue }
-}
 
-public struct PromptTechniqueRegistry: Sendable {
-    public let techniques = PromptTechnique.allCases
-    public init() {}
+    public var isAdvanced: Bool {
+        switch self {
+        case .zeroShot, .role, .contextInjection, .structured, .outputFormat, .constraints, .fewShot: false
+        default: true
+        }
+    }
 
-    public func selected(for mode: PromptMode, input: String, custom: Set<PromptTechnique> = []) -> [PromptTechnique] {
-        let words = input.split(whereSeparator: \.isWhitespace).count
-        switch mode {
-        case .basic: return [.zeroShot, .structured]
-        case .custom: return PromptTechnique.allCases.filter { custom.contains($0) }
-        case .auto:
-            guard words > 18 || input.contains("\n") else { return [.zeroShot] }
-            return [.roleContext, .structured, .decomposition, .verification]
-        case .advanced:
-            var result: [PromptTechnique] = [.roleContext, .structured, .decomposition, .concisePlanning, .verification]
-            result.append(.boundedIteration)
-            if words > 50 { result.append(.selfCritique) }
-            if input.localizedCaseInsensitiveContains("if ") || input.localizedCaseInsensitiveContains("unless") { result.append(.conditionalBranching) }
-            return result
+    public var summary: String {
+        switch self {
+        case .zeroShot: "A direct, clarified instruction with no scaffolding."
+        case .role: "Frames the agent's role for this codebase."
+        case .contextInjection: "Adds relevant files, modules and notes from the workspace."
+        case .structured: "Separates objective, requirements and suggestions."
+        case .outputFormat: "Specifies what the agent reports back."
+        case .constraints: "States what must not change."
+        case .fewShot: "Shows an example of the expected report."
+        case .decomposition: "Breaks the work into tasks."
+        case .promptChaining: "Splits the work into prompts run one after another."
+        case .selfCritique: "Has the agent review its own diff before finishing."
+        case .boundedIteration: "Implement, test, fix — up to a fixed number of attempts."
+        case .conditionalBranching: "Says what to do when the code differs from expectations."
+        case .verification: "Defines checks the agent must run."
+        case .toolUse: "Search, read, act, observe — for agents with tools."
+        case .multiStage: "Inspect, implement, verify and report as stages."
+        case .dependencyPlanning: "Orders tasks by their dependencies."
+        case .acceptanceCriteria: "Lists explicit, checkable done conditions."
         }
     }
 }
 
-public struct PromptPlan: Codable, Identifiable, Sendable {
+public struct PlanTask: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var title: String
+    public var detail: String
+    public var dependsOn: [String]
+    public init(id: String, title: String, detail: String = "", dependsOn: [String] = []) {
+        self.id = id; self.title = title; self.detail = detail; self.dependsOn = dependsOn
+    }
+}
+
+public struct CodeReference: Codable, Hashable, Sendable {
+    public enum Source: String, Codable, Sendable { case graph, model }
+    public var path: String
+    public var symbol: String?
+    public var reason: String
+    public var source: Source
+    public init(path: String, symbol: String? = nil, reason: String, source: Source) {
+        self.path = path; self.symbol = symbol; self.reason = reason; self.source = source
+    }
+}
+
+/// A component the request would add. Shown only as a planned overlay, never as part of the codebase.
+public struct PlannedComponent: Codable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+    public var type: ComponentType
+    public var connectsTo: [String]
+    public init(id: String, name: String, type: ComponentType, connectsTo: [String] = []) {
+        self.id = id; self.name = name; self.type = type; self.connectsTo = connectsTo
+    }
+}
+
+public struct IntentValidation: Codable, Hashable, Sendable {
+    /// Terms from the original request (identifiers, paths, quoted text) missing from the generated prompt before repair.
+    public var missingTerms: [String]
+    public var modelReportedPreserved: Bool?
+    public var repaired: Bool
+    public var passed: Bool { missingTerms.isEmpty && modelReportedPreserved != false }
+    public init(missingTerms: [String] = [], modelReportedPreserved: Bool? = nil, repaired: Bool = false) {
+        self.missingTerms = missingTerms; self.modelReportedPreserved = modelReportedPreserved; self.repaired = repaired
+    }
+}
+
+/// What the user wants the coding agent to do. Not a description of the existing codebase (see `CodebaseGraph`).
+public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
-    public var createdAt: Date
+    public var workspaceID: UUID?
     public var originalPrompt: String
     public var optimizedPrompt: String
-    public var selectedWorkspace: URL?
-    public var extractedIntent: String
+    /// Sequential prompts when prompt chaining is selected; empty otherwise.
+    public var chainedPrompts: [String]
+    public var mode: PromptMode
+    public var intent: String
+    public var taskType: TaskType
     public var selectedTechniques: [PromptTechnique]
-    public var codebaseReferences: [String]
-    public var taskSteps: [String]
-    public var dependencies: [String]
-    public var userConfirmedConstraints: [String]
-    public var suggestedDecisions: [String]
+    public var codeReferences: [CodeReference]
+    public var tasks: [PlanTask]
+    public var constraints: [String]
     public var successCriteria: [String]
     public var missingInformation: [String]
+    /// Stated by the user in the request.
+    public var confirmedRequirements: [String]
+    /// Proposed by the optimizer; the agent may revise them.
+    public var suggestedDecisions: [String]
+    public var plannedComponents: [PlannedComponent]
     public var iterationLimit: Int
     public var verificationInstructions: [String]
+    public var validation: IntentValidation
+    /// "local" when built without a model call.
+    public var provider: String
+    public var notices: [String]
+    public var cacheKey: String
+    public var createdAt: Date
+    public var updatedAt: Date
 
-    public init(id: UUID = UUID(), createdAt: Date = .now, originalPrompt: String, optimizedPrompt: String = "", selectedWorkspace: URL? = nil, extractedIntent: String = "", selectedTechniques: [PromptTechnique] = [], codebaseReferences: [String] = [], taskSteps: [String] = [], dependencies: [String] = [], userConfirmedConstraints: [String] = [], suggestedDecisions: [String] = [], successCriteria: [String] = [], missingInformation: [String] = [], iterationLimit: Int = 0, verificationInstructions: [String] = []) {
-        self.id = id; self.createdAt = createdAt; self.originalPrompt = originalPrompt; self.optimizedPrompt = optimizedPrompt
-        self.selectedWorkspace = selectedWorkspace; self.extractedIntent = extractedIntent; self.selectedTechniques = selectedTechniques
-        self.codebaseReferences = codebaseReferences; self.taskSteps = taskSteps; self.dependencies = dependencies
-        self.userConfirmedConstraints = userConfirmedConstraints; self.suggestedDecisions = suggestedDecisions
-        self.successCriteria = successCriteria; self.missingInformation = missingInformation
-        self.iterationLimit = iterationLimit; self.verificationInstructions = verificationInstructions
-    }
-}
-
-public protocol PromptOptimizing: Sendable {
-    func optimize(_ input: String, mode: PromptMode, customTechniques: Set<PromptTechnique>, workspace: URL?) async throws -> PromptPlan
-}
-
-public struct PromptEngineeringService: PromptOptimizing {
-    private let registry = PromptTechniqueRegistry()
-    public init() {}
-
-    public func optimize(_ input: String, mode: PromptMode, customTechniques: Set<PromptTechnique> = [], workspace: URL? = nil) async throws -> PromptPlan {
-        let original = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !original.isEmpty else { throw PromptError.emptyInput }
-        let techniques = registry.selected(for: mode, input: original, custom: customTechniques)
-        let steps = techniques.contains(.decomposition) ? ["Inspect the relevant code and identify affected components.", "Implement the requested change while preserving stated constraints.", "Verify the result and report any unresolved issues."] : []
-        var result = original
-        if techniques.contains(.structured) {
-            result += "\n\nRequirements:\n- Preserve all constraints stated above.\n- Keep the change focused on the requested task."
-        }
-        if !steps.isEmpty {
-            result += "\n\nTask steps:\n" + steps.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        }
-        if techniques.contains(.verification) || techniques.contains(.boundedIteration) {
-            result += "\n\nVerification:\n- Run the relevant checks and inspect their results.\n- If a check fails, fix the cause and rerun it, up to 3 attempts.\n- Report checks run and any remaining failures."
-        }
-        return PromptPlan(originalPrompt: original, optimizedPrompt: result, selectedWorkspace: workspace,
-                          extractedIntent: original, selectedTechniques: techniques, taskSteps: steps,
-                          successCriteria: ["The requested change is implemented.", "Relevant verification results are reported."],
-                          iterationLimit: techniques.contains(.boundedIteration) ? 3 : 0,
-                          verificationInstructions: techniques.contains(.verification) ? ["Run relevant checks", "Report unresolved failures"] : [])
-    }
-}
-
-public enum PromptError: Error { case emptyInput }
-
-public actor PromptPlanService {
-    private var plans: [PromptPlan] = []
-    private let fileURL: URL
-    public init(fileURL: URL? = nil) {
-        self.fileURL = fileURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Refine/prompt-plans.json")
-        if let data = try? Data(contentsOf: self.fileURL), let decoded = try? JSONDecoder().decode([PromptPlan].self, from: data) { plans = decoded }
-    }
-    public func allPlans() -> [PromptPlan] { plans }
-    public func save(_ plan: PromptPlan) throws {
-        plans.insert(plan, at: 0)
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(plans).write(to: fileURL, options: .atomic)
+    public init(id: UUID = UUID(), workspaceID: UUID? = nil, originalPrompt: String, optimizedPrompt: String = "", chainedPrompts: [String] = [],
+                mode: PromptMode = .auto, intent: String = "", taskType: TaskType = .other, selectedTechniques: [PromptTechnique] = [],
+                codeReferences: [CodeReference] = [], tasks: [PlanTask] = [], constraints: [String] = [], successCriteria: [String] = [],
+                missingInformation: [String] = [], confirmedRequirements: [String] = [], suggestedDecisions: [String] = [],
+                plannedComponents: [PlannedComponent] = [], iterationLimit: Int = 0, verificationInstructions: [String] = [],
+                validation: IntentValidation = IntentValidation(), provider: String = "local", notices: [String] = [], cacheKey: String = "",
+                createdAt: Date = .now, updatedAt: Date = .now) {
+        self.id = id; self.workspaceID = workspaceID; self.originalPrompt = originalPrompt; self.optimizedPrompt = optimizedPrompt
+        self.chainedPrompts = chainedPrompts; self.mode = mode; self.intent = intent; self.taskType = taskType
+        self.selectedTechniques = selectedTechniques; self.codeReferences = codeReferences; self.tasks = tasks
+        self.constraints = constraints; self.successCriteria = successCriteria; self.missingInformation = missingInformation
+        self.confirmedRequirements = confirmedRequirements; self.suggestedDecisions = suggestedDecisions
+        self.plannedComponents = plannedComponents; self.iterationLimit = iterationLimit
+        self.verificationInstructions = verificationInstructions; self.validation = validation; self.provider = provider
+        self.notices = notices; self.cacheKey = cacheKey; self.createdAt = createdAt; self.updatedAt = updatedAt
     }
 }

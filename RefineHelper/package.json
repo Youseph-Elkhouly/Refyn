@@ -1,0 +1,22 @@
+{
+  "name": "refine-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local analysis and Giotto rendering helper for the Refine macOS app",
+  "type": "module",
+  "main": "dist/src/main.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "dependencies": {
+    "giotto": "github:nicoloboschi/giotto#3d5159acdce4ece8f0a1e4a40cb1a8b99fe2e233",
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "refine/helper-protocol.v1",
+  "title": "Refine ↔ RefineHelper protocol, version 1",
+  "description": "Newline-delimited JSON over the helper's stdin/stdout. One request per line, one response per line, matched by id. Responses may arrive out of order. The helper exits when stdin closes. Implemented in RefineHelper/src/protocol/messages.ts and Sources/RefineCore/Architecture/HelperClient.swift.",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "required": ["protocol", "id", "method"],
+      "properties": {
+        "protocol": { "const": 1 },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "enum": ["hello", "analyze", "git.info", "git.diff", "diagram.render"] },
+        "params": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["protocol", "id", "ok", "result"],
+          "properties": { "protocol": { "const": 1 }, "id": { "type": "string" }, "ok": { "const": true }, "result": {} }
+        },
+        {
+          "type": "object",
+          "required": ["protocol", "id", "ok", "error"],
+          "properties": {
+            "protocol": { "const": 1 },
+            "id": { "type": ["string", "null"] },
+            "ok": { "const": false },
+            "error": {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["bad_request", "unsupported_protocol", "unknown_method", "not_found", "not_a_repository", "internal"] },
+                "message": { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "methods": {
+      "hello": { "params": {}, "result": { "protocol": "integer", "helperVersion": "string", "giottoVersion": "string", "node": "string", "languages": "[{name, level}]" } },
+      "analyze": {
+        "params": { "root": "absolute path", "workspaceId": "string", "indexPath": "optional absolute path of the per-workspace file index (read, then rewritten)" },
+        "result": { "graph": "codebase-graph.schema.json", "changes": "{added, modified, removed} vs the previous index", "fileHashes": "{path: sha256}", "git": "{isRepository, head, dirtyPaths}" }
+      },
+      "git.info": { "params": { "root": "string" }, "result": { "isRepository": "boolean", "head": "string|null", "branch": "string|null", "changes": "[{path, status}]" } },
+      "git.diff": { "params": { "root": "string", "base": "commit or null (HEAD)", "paths": "[string] (max 200)" }, "result": { "files": "[{path, additions, deletions, patch, truncated}]" } },
+      "diagram.render": {
+        "params": { "graph": "codebase-graph.schema.json", "options": "{title?, highlight?: {added, modified, removed, addedEdges}, planned?: [{id, name, type, connectsTo}], showTests, dark}" },
+        "result": { "svg": "string (Giotto toSvg)", "doc": "Giotto diagram JSON", "elementIds": "{diagramId: graphNodeId}", "hidden": "integer", "warnings": "[string]" }
+      }
+    }
+  },
+  "$ref": "#/$defs/request"
+}

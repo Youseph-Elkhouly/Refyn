@@ -10,10 +10,14 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.0.0"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit", exact: "0.14.1"),
     ],
     targets: [
         .target(name: "RefineCore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
-        .executableTarget(name: "Refine", dependencies: ["RefineCore"]),
-        .testTarget(name: "RefineCoreTests", dependencies: ["RefineCore"]),
+        .executableTarget(
+            name: "Refine",
+            dependencies: ["RefineCore", .product(name: "WhisperKit", package: "WhisperKit")]
+        ),
+        .testTarget(name: "RefineCoreTests", dependencies: ["RefineCore", .product(name: "GRDB", package: "GRDB.swift")]),
     ]
 )

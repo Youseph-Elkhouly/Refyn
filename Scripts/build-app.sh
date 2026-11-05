@@ -1,14 +1,36 @@
 #!/bin/sh
+# Builds Refine.app: the Swift app, plus the Node helper (compiled, with production dependencies) in Resources.
+# Usage: Scripts/build-app.sh [debug|release]   (default: release)
 set -eu
 
+CONFIG=${1:-release}
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BUILD_DIR="$ROOT_DIR/.build/release"
+BUILD_DIR="$ROOT_DIR/.build/$CONFIG"
 APP_DIR="$ROOT_DIR/.build/Refine.app"
+RES_DIR="$APP_DIR/Contents/Resources"
 
 cd "$ROOT_DIR"
-swift build -c release
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+command -v node >/dev/null || { echo "Node.js 20+ is required to build the helper" >&2; exit 1; }
+
+echo "› Building helper"
+(cd RefineHelper && npm ci --no-audit --no-fund && npm run build)
+
+echo "› Building app ($CONFIG)"
+swift build -c "$CONFIG"
+
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$RES_DIR/RefineHelper"
 cp "$BUILD_DIR/Refine" "$APP_DIR/Contents/MacOS/Refine"
+# SwiftPM resource bundles (GRDB, WhisperKit dependencies).
+for bundle in "$BUILD_DIR"/*.bundle; do
+  [ -e "$bundle" ] && cp -R "$bundle" "$RES_DIR/"
+done
+
+echo "› Bundling helper"
+cp -R RefineHelper/dist RefineHelper/package.json RefineHelper/package-lock.json "$RES_DIR/RefineHelper/"
+rm -rf "$RES_DIR/RefineHelper/dist/test"
+(cd "$RES_DIR/RefineHelper" && npm ci --omit=dev --no-audit --no-fund --ignore-scripts >/dev/null)
+
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -17,12 +39,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Refine</string>
     <key>CFBundleIdentifier</key><string>com.refine.prompt-assistant</string>
     <key>CFBundleName</key><string>Refine</string>
+    <key>CFBundleDisplayName</key><string>Refine</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>Refine records your voice only while you hold the dictation shortcut or press the microphone button, and transcribes it on this Mac.</string>
+    <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 PLIST
+
 codesign --force --deep --sign - "$APP_DIR"
 printf 'Built %s\n' "$APP_DIR"
