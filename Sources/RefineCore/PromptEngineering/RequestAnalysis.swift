@@ -18,7 +18,10 @@ public struct RequestAnalysis: Sendable, Hashable {
         let sentences = Self.sentences(text)
         intent = sentences.first.map { Self.stripFiller($0) } ?? text
         taskType = Self.classify(text)
-        constraints = sentences.filter(Self.isConstraint).map { Self.stripFiller($0) }
+        // A sentence containing one constraint can still be the entire multi-part request.
+        // Keep the extracted constraint list focused; the full request is preserved separately.
+        constraints = Array(Set(sentences.filter(Self.isConstraint).map { Self.stripFiller($0) }
+            .filter { !$0.isEmpty && $0.count <= 120 })).sorted()
         keyTerms = Self.keyTerms(text)
         let lower = text.lowercased()
         mentionsTests = ["test", "spec", "coverage", "ci"].contains { lower.contains($0) }

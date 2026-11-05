@@ -80,7 +80,9 @@ public struct PromptOptimizer: Sendable {
         plan.cacheKey = cacheKey(for: input)
 
         // 8: construction.
-        let parts = PromptComposer.Parts(role: modelPlan?.role.nilIfEmpty ?? Self.defaultRole(context), objective: modelPlan?.objective ?? analysis.intent,
+        let modelRole = modelPlan?.role.trimmingCharacters(in: .whitespacesAndNewlines)
+        let role = modelRole.flatMap { $0.count >= 16 && $0.lowercased() != "refine" ? $0 : nil } ?? Self.defaultRole(context)
+        let parts = PromptComposer.Parts(role: role, objective: modelPlan?.objective ?? analysis.intent,
                                          exampleReport: modelPlan?.exampleReport, context: context)
         var prompt = PromptComposer.compose(plan, parts: parts)
         plan.chainedPrompts = PromptComposer.chain(plan, parts: parts)
@@ -122,7 +124,25 @@ public struct PromptOptimizer: Sendable {
             plannedComponents: (m.plannedComponents ?? []).enumerated().map { i, p in
                 PlannedComponent(id: "p\(i + 1)", name: p.name, type: ComponentType(rawValue: p.type) ?? .library, connectsTo: p.connectsTo.filter(componentIDs.contains))
             },
-            verificationInstructions: m.verificationSteps)
+            verificationInstructions: verificationSteps(modelSteps: m.verificationSteps, request: analysis.text))
+    }
+
+    /// Keep named test scenarios, but don't let the model invent what each scenario should do.
+    static func verificationSteps(modelSteps: [String], request: String) -> [String] {
+        let nsRequest = request as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"\btests?\s+([^.!?\n]+)"#, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: request, range: NSRange(location: 0, length: nsRequest.length)),
+              let range = Range(match.range(at: 1), in: request) else { return modelSteps }
+        var scenarios = String(request[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" cases", " case"] where scenarios.lowercased().hasSuffix(suffix) {
+            scenarios = String(scenarios.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+        guard !scenarios.isEmpty, scenarios.count <= 160,
+              ![" then ", " fix ", " stop ", " and report "].contains(where: { scenarios.localizedCaseInsensitiveContains($0) }) else {
+            return modelSteps
+        }
+        return ["Test the requested cases (\(scenarios)). Verify outcomes stated in the request; where an outcome is unspecified, observe and preserve existing behavior."]
     }
 
     /// The offline plan: everything here comes from the request text and the analyzer, nothing invented.

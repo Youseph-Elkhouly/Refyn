@@ -26,6 +26,15 @@ extension ModelPlan {
 final class PromptEngineeringTests: XCTestCase {
     let offline = PromptOptimizer(provider: nil)
 
+    func testModelPlanDecodingDefaultsOmittedOptionalLists() throws {
+        let json = #"{"intent":"Add retries","taskType":"feature","role":"","objective":"Add timeout retries","confirmedRequirements":["Never retry 4xx"],"tasks":[{"id":"t1","title":"Add retries"}],"intentPreserved":true}"#
+        let plan = try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+        XCTAssertEqual(plan.confirmedRequirements, ["Never retry 4xx"])
+        XCTAssertEqual(plan.tasks.first?.dependsOn, [])
+        XCTAssertEqual(plan.verificationSteps, [])
+        XCTAssertEqual(plan.codeReferences, [])
+    }
+
     func testAutoKeepsSimpleRequestSimple() async throws {
         let plan = try await offline.optimize(.init(text: "Rename this variable", mode: .auto))
         XCTAssertEqual(plan.selectedTechniques, [.zeroShot])

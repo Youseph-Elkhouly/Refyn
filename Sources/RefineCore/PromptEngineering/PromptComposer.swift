@@ -46,7 +46,7 @@ public enum PromptComposer {
             s.append(section("If things differ from expectations", bullets([
                 "If the requested behavior already exists, say where and stop without changing code.",
                 "If a requirement conflicts with existing code or another requirement, stop and report the conflict instead of choosing silently.",
-                "If a required detail is missing, make the smallest reasonable assumption, state it, and continue.",
+                "If a required detail is missing and the code does not resolve it, state the assumption before proceeding; do not turn an assumption into a requirement or acceptance criterion.",
             ])))
         }
         if !plan.missingInformation.isEmpty { s.append(section("Open questions", bullets(plan.missingInformation.map { "\($0) — confirm in the code or ask before assuming." }))) }

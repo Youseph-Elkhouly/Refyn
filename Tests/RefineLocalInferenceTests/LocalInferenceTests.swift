@@ -20,11 +20,37 @@ final class LocalInferenceTests: XCTestCase {
         EvaluationCase(name: "refactor", request: "extract date formatting into a helper without changing displayed dates", mode: .basic, retain: ["date", "without changing"], isSimple: false, expectsStructured: false),
         EvaluationCase(name: "short request", request: "rename Save to Continue", mode: .auto, retain: ["Save", "Continue"], isSimple: true, expectsStructured: false),
         EvaluationCase(name: "verification workflow", request: "add retry to image uploads, run the upload tests, fix failures, then stop after two retries", mode: .advanced, retain: ["image uploads", "tests", "two retries"], isSimple: false, expectsStructured: true),
+        EvaluationCase(name: "image upload retry", request: "image uploads sometimes fail on timeout. add retry but don't retry 4xx responses. keep the current progress UI, max 2 retries, and test timeout, offline, and permanent failure cases. don’t change upload API", mode: .advanced, retain: ["timeout", "4xx", "current progress UI", "2 retries", "offline", "permanent failure", "upload API"], isSimple: false, expectsStructured: true),
     ]
 
     func testModelConfigurationUsesQwen3FourBitCheckpoint() {
         XCTAssertEqual(LocalModelManager.modelID, "mlx-community/Qwen3-4B-4bit")
         XCTAssertTrue(LocalModelManager.modelLabel.contains("4-bit"))
+    }
+
+    @MainActor
+    func testImageUploadRetryPromptProducesUsableModelOutput() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
+            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the local Qwen output-quality check.")
+        }
+        let manager = LocalModelManager()
+        await manager.install()
+        let request = "image uploads sometimes fail on timeout. add retry but don't retry 4xx responses. keep the current progress UI, max 2 retries, and test timeout, offline, and permanent failure cases. don’t change upload API"
+        let plan = try await PromptOptimizer(provider: LocalLLMProvider(manager: manager))
+            .optimize(.init(text: request, mode: .advanced))
+        print("Actual Qwen output for retry sample:\n\(plan.optimizedPrompt)")
+        XCTAssertFalse(plan.validation.repaired, "The model should preserve the request without relying on a verbatim repair.")
+        XCTAssertFalse(plan.tasks.isEmpty)
+        XCTAssertFalse(plan.verificationInstructions.isEmpty)
+        XCTAssertTrue(plan.verificationInstructions.contains { $0.localizedCaseInsensitiveContains("offline") }, "The offline case must have an explicit verification step.")
+        XCTAssertTrue(plan.missingInformation.contains { $0.localizedCaseInsensitiveContains("offline") } ||
+                      plan.verificationInstructions.contains { $0.localizedCaseInsensitiveContains("existing") || $0.localizedCaseInsensitiveContains("observe") },
+                      "Do not invent the expected behavior for the unspecified offline case.")
+        XCTAssertFalse(plan.constraints.contains { $0.localizedCaseInsensitiveContains(request) }, "Do not repeat the full request as a constraint.")
+        XCTAssertLessThan(plan.optimizedPrompt.count, 3_000, "The generated prompt should stay focused.")
+        for marker in ["timeout", "4xx", "progress UI", "2 retries", "offline", "permanent failure", "upload API"] {
+            XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains(marker), "Missing required detail: \(marker)")
+        }
     }
 
     /// Opt in explicitly because this downloads roughly 2.3 GB on first run and performs real inference.
@@ -92,6 +118,7 @@ final class LocalInferenceTests: XCTestCase {
             totalDuration += elapsed
 
             let text = plan.optimizedPrompt.lowercased()
+            if sample.name == "image upload retry" { print("Prompt baseline output [image upload retry]:\n\(plan.optimizedPrompt)") }
             let keptTerms = sample.retain.allSatisfy { text.contains($0.lowercased()) }
             if keptTerms { preserved += 1 }
             if sample.isSimple, plan.optimizedPrompt.count <= max(120, sample.request.count * 3), !plan.optimizedPrompt.contains("##") { concise += 1 }
