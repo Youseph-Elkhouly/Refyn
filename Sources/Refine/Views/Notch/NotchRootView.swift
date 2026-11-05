@@ -4,6 +4,7 @@ import SwiftUI
 struct NotchRootView: View {
     @Bindable var model: AppModel
     let geometry: () -> PanelController.Geometry
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let g = geometry()
@@ -13,23 +14,23 @@ struct NotchRootView: View {
                 ExpandedPanelView(model: model)
                     .padding(.top, g.hasNotch ? g.notchHeight : 0)
                     .background(Theme.background.clipShape(shape(g)))
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    .transition(.opacity)
             } else {
                 CollapsedPill(model: model, geometry: g)
                     .transition(.opacity)
             }
         }
         .clipShape(shape(g))
-        .overlay(shape(g).stroke(model.isExpanded ? Theme.stroke : .clear, lineWidth: 1))
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: model.isExpanded)
+        .overlay(shape(g).stroke(model.isExpanded ? Theme.border : .clear, lineWidth: 1))
+        .animation(reduceMotion ? nil : .easeInOut(duration: Theme.Motion.slow), value: model.isExpanded)
         .preferredColorScheme(.dark)
-        .tint(Theme.accent)
+        .tint(Theme.text)
     }
 
     /// Flat top so the panel reads as growing out of the notch; rounded everywhere on displays without one.
     func shape(_ g: PanelController.Geometry) -> UnevenRoundedRectangle {
-        let bottom: CGFloat = model.isExpanded ? 22 : (g.hasNotch ? 12 : 15)
-        let top: CGFloat = g.hasNotch ? 0 : (model.isExpanded ? 22 : 15)
+        let bottom: CGFloat = model.isExpanded ? Theme.Radius.panel : (g.hasNotch ? 12 : 15)
+        let top: CGFloat = g.hasNotch ? 0 : (model.isExpanded ? Theme.Radius.panel : 15)
         return UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top, style: .continuous)
     }
 }
@@ -37,31 +38,37 @@ struct NotchRootView: View {
 struct CollapsedPill: View {
     let model: AppModel
     let geometry: PanelController.Geometry
+    @State private var hovering = false
 
     var body: some View {
         Button { model.onExpand() } label: {
             HStack(spacing: 8) {
-                Image(systemName: "sparkle").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.accent)
+                RefineMark(size: 12, color: hovering ? Theme.text : Theme.textSecondary)
+                    .scaleEffect(hovering ? 1.1 : 1)
                 if !geometry.hasNotch {
-                    Text(model.current?.name ?? "Refine").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    Text(model.current?.name ?? "Refine").font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 Spacer(minLength: geometry.hasNotch ? geometry.notchWidth : 4)
                 status
             }
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.surface.opacity(hovering ? 0.9 : 0))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Theme.Motion.base, value: hovering)
         .help(model.current.map { "Refine — \($0.name)" } ?? "Refine")
+        .accessibilityLabel("Open Refine")
     }
 
     @ViewBuilder var status: some View {
         switch model.voice.state {
-        case .recording: Waveform(levels: Array(model.voice.levels.suffix(14)), color: Theme.danger)
-        case .transcribing: ProgressView().controlSize(.mini)
+        case .recording: Waveform(levels: Array(model.voice.levels.suffix(14)))
+        case .transcribing: StatusIndicator(kind: .busy)
         default:
-            Circle().fill(model.current == nil ? Theme.tertiary : model.analysis == .running ? Theme.warning : Theme.success).frame(width: 6, height: 6)
+            StatusIndicator(kind: model.current == nil ? .idle : model.analysis == .running || model.isOptimizing ? .busy : .ready)
         }
     }
 }

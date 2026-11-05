@@ -6,82 +6,68 @@ struct ComposerView: View {
     @FocusState private var focused: Bool
     @State private var showTechniques = false
 
+    private var canOptimize: Bool { !model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                SectionLabel(text: "What should your agent do?")
-                Spacer()
-                if model.current == nil {
-                    Button("Choose a workspace for context") { if let url = AppActions.chooseFolder() { Task { await model.addWorkspace(url) } } }
-                        .buttonStyle(.plain).font(.system(size: 11.5)).foregroundStyle(Theme.accent)
-                } else if let snap = model.verifiedSnapshot {
-                    Text("\(snap.graph.nodes.count) components · v\(snap.version)").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                        .help("Context comes from the last verified architecture snapshot.")
-                }
-            }
+        VStack(spacing: 0) {
             editor
+            Hairline()
             controls
-            if model.mode == .custom { techniquePicker }
-            Spacer(minLength: 0)
             footer
         }
-        .padding(.horizontal, 18).padding(.vertical, 14)
-        .onAppear { focused = true }
+        .task { await focusEditor() }
+    }
+
+    /// The panel becomes key a moment after the view appears, so retry once.
+    func focusEditor() async {
+        focused = true
+        try? await Task.sleep(for: .milliseconds(120))
+        focused = true
     }
 
     var editor: some View {
-        ZStack(alignment: .topLeading) {
-            TextEditor(text: $model.input)
-                .font(.system(size: 14.5))
-                .scrollContentBackground(.hidden)
-                .focused($focused)
-                .padding(8)
-            if model.input.isEmpty {
-                Text("Describe the change, rough edges and all. Refine shapes it into a prompt your agent can execute.")
-                    .font(.system(size: 14)).foregroundStyle(Theme.tertiary)
-                    .padding(.horizontal, 13).padding(.vertical, 8)
-                    .allowsHitTesting(false)
-            }
+        ZStack(alignment: .bottomTrailing) {
+            REditor(text: $model.input, placeholder: "What are you working on?", inset: 14, focus: $focused)
+                .padding(.horizontal, 6)
+                .accessibilityLabel("Prompt")
             if model.voice.state == .recording || model.voice.state == .transcribing {
-                HStack(spacing: 8) {
-                    if model.voice.state == .recording { Waveform(levels: model.voice.levels, color: Theme.danger); Text("Listening…") }
-                    else { ProgressView().controlSize(.small); Text("Transcribing locally…") }
+                HStack(spacing: Theme.Space.sm) {
+                    if model.voice.state == .recording { Waveform(levels: model.voice.levels); Text("Listening…") }
+                    else { StatusIndicator(kind: .busy); Text("Transcribing on this Mac…") }
                 }
-                .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
-                .padding(8).background(Capsule().fill(Theme.raised))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(8)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(Capsule().fill(Theme.surface)).overlay(Capsule().stroke(Theme.border, lineWidth: 1))
+                .padding(Theme.Space.md)
+                .transition(.opacity)
             }
         }
-        .frame(minHeight: 170, maxHeight: 260)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(focused ? Theme.accent.opacity(0.45) : Theme.stroke))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .motion(Theme.Motion.base, value: model.voice.state)
     }
 
     var controls: some View {
-        HStack(spacing: 10) {
-            Button { model.voice.toggle() } label: {
-                Image(systemName: model.voice.isRecording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 13)).frame(width: 30, height: 28)
-                    .foregroundStyle(model.voice.isRecording ? Theme.danger : Theme.text)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.07)))
+        HStack(spacing: Theme.Space.sm) {
+            IconButton(symbol: model.voice.isRecording ? "stop.fill" : "mic", help: model.voice.isRecording ? "Stop dictation" : "Dictate (or hold \(Preferences.pushToTalkShortcut.display))", active: model.voice.isRecording) {
+                model.voice.toggle()
             }
-            .buttonStyle(.plain)
-            .help("Dictate (or hold \(Preferences.pushToTalkShortcut.display))")
             .disabled(model.voice.state == .transcribing)
 
-            Picker("Mode", selection: $model.mode) {
-                ForEach(PromptMode.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 270)
-            .help(modeHelp)
+            Segmented(options: PromptMode.allCases, selection: $model.mode) { $0.rawValue }
+                .help(modeHelp)
 
-            Spacer()
-            if model.isOptimizing { ProgressView().controlSize(.small) }
-            Button { Task { await model.optimize() } } label: { Label("Optimize", systemImage: "sparkles") }
-                .buttonStyle(PillButtonStyle(prominent: true))
+            if model.mode == .custom {
+                IconButton(symbol: "slider.horizontal.3", help: "Choose techniques", active: showTechniques) { showTechniques.toggle() }
+                    .popover(isPresented: $showTechniques, arrowEdge: .bottom) { techniquePicker }
+            }
+
+            Spacer(minLength: Theme.Space.sm)
+            KeyHint(text: "⌘↩")
+            RButton(title: model.isOptimizing ? "Optimizing" : "Optimize", kind: .primary, loading: model.isOptimizing) { Task { await model.optimize() } }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(model.isOptimizing || model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canOptimize)
         }
+        .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
     var modeHelp: String {
@@ -94,34 +80,42 @@ struct ComposerView: View {
     }
 
     var techniquePicker: some View {
-        let columns = [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
-            ForEach(PromptTechnique.allCases) { t in
-                Toggle(isOn: Binding(get: { model.customTechniques.contains(t) },
-                                     set: { on in if on { model.customTechniques.insert(t) } else { model.customTechniques.remove(t) } })) {
-                    Text(t.rawValue).font(.system(size: 11.5))
+        let columns = [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
+        return ScrollView {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Space.sm) {
+                ForEach(PromptTechnique.allCases) { t in
+                    Toggle(isOn: Binding(get: { model.customTechniques.contains(t) },
+                                         set: { on in if on { model.customTechniques.insert(t) } else { model.customTechniques.remove(t) } })) {
+                        Text(t.rawValue).font(Theme.caption)
+                    }
+                    .toggleStyle(.checkbox)
+                    .help(t.summary)
                 }
-                .toggleStyle(.checkbox)
-                .help(t.summary)
             }
+            .padding(Theme.Space.lg)
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+        .frame(width: 360, height: 280)
     }
 
     var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Theme.Space.md) {
             if case .failed(let message) = model.voice.state {
-                Label(message, systemImage: "mic.slash").foregroundStyle(Theme.warning).lineLimit(2)
-                Button("Dismiss") { model.voice.clearError() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
-            } else if model.execution != nil {
-                Button { Task { await model.startReview() } } label: { Label("Review changes from the last hand-off", systemImage: "checklist") }
-                    .buttonStyle(.plain).foregroundStyle(Theme.accent)
+                Label(message, systemImage: "mic.slash").foregroundStyle(Theme.textSecondary).lineLimit(2)
+                Button("Dismiss") { model.voice.clearError() }.buttonStyle(.plain).foregroundStyle(Theme.text)
+            } else if model.current == nil {
+                Button("Choose a workspace for context") { if let url = AppActions.chooseFolder() { Task { await model.addWorkspace(url) } } }
+                    .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+            } else if let snap = model.verifiedSnapshot {
+                Text("\(snap.graph.nodes.count) components in context").help("Context comes from the last verified analysis (v\(snap.version)).")
+            }
+            if model.execution != nil {
+                Button { Task { await model.startReview() } } label: { Label("Review changes", systemImage: "checklist") }
+                    .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
-            Text("⌘↩ optimize · \(Preferences.toggleShortcut.display) toggle · hold \(Preferences.pushToTalkShortcut.display) to dictate")
-                .foregroundStyle(Theme.tertiary)
+            Text("\(Preferences.toggleShortcut.display) toggle · hold \(Preferences.pushToTalkShortcut.display) to dictate")
         }
-        .font(.system(size: 11))
+        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+        .padding(.horizontal, 16).padding(.bottom, 10)
     }
 }

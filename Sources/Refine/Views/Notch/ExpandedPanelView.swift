@@ -7,8 +7,8 @@ struct ExpandedPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Theme.stroke)
-            if let banner = model.banner { BannerView(banner: banner) { model.banner = nil } }
+            Hairline()
+            if let banner = model.banner { BannerView(banner: banner) { model.banner = nil }.transition(.opacity) }
             Group {
                 switch model.route {
                 case .compose: ComposerView(model: model)
@@ -19,48 +19,61 @@ struct ExpandedPanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .id(model.route)
+            .transition(.opacity)
         }
         .foregroundStyle(Theme.text)
+        .motion(Theme.Motion.base, value: model.route)
+        .motion(Theme.Motion.base, value: model.banner)
         .onExitCommand { model.onCollapse() }
     }
 
     var header: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "sparkle").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent).padding(.trailing, 2)
+        HStack(spacing: Theme.Space.sm) {
+            Button { model.route = model.plan != nil && model.route == .compose ? .result : .compose } label: {
+                HStack(spacing: 7) {
+                    RefineMark(size: 12)
+                    Text("Refine").font(Theme.title)
+                }
+            }
+            .buttonStyle(.plain)
+            .help(model.route == .compose ? "Back to the last result" : "Back to the editor")
+            .accessibilityLabel("Refine")
+            .disabled(model.route == .compose && model.plan == nil)
+
+            Rectangle().fill(Theme.border).frame(width: 1, height: 14)
             WorkspaceMenu(model: model)
             if model.analysis == .running {
-                ProgressView().controlSize(.mini).help("Analyzing workspace")
+                StatusIndicator(kind: .busy, label: "Analyzing").help("Analyzing workspace")
             } else if case .failed(let message) = model.analysis {
-                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 11)).foregroundStyle(Theme.warning).help(message)
+                Image(systemName: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(Theme.textSecondary).help(message)
             }
             Spacer()
-            IconButton(symbol: "square.and.pencil", help: "New prompt", active: model.route == .compose) {
-                if model.route == .compose { model.input = ""; model.plan = nil }
-                model.route = .compose
-            }
             IconButton(symbol: "note.text", help: "Notes", active: model.route == .notes) { model.route = model.route == .notes ? .compose : .notes }
             IconButton(symbol: "bookmark", help: "Saved prompts", active: model.route == .saved) { model.route = model.route == .saved ? .compose : .saved }
-            IconButton(symbol: "point.3.connected.trianglepath.dotted", help: "Architecture") { model.visualize() }
-            IconButton(symbol: "gearshape", help: "Settings") { AppActions.openSettings() }
-            IconButton(symbol: "chevron.up", help: "Collapse (Esc)") { model.onCollapse() }
+            IconButton(symbol: "gearshape", help: "Settings (⌘,)") { AppActions.openSettings() }
+                .keyboardShortcut(",", modifiers: .command)
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
+        .padding(.horizontal, 14).frame(height: 44)
     }
 }
 
 struct BannerView: View {
     let banner: AppModel.Banner
     let dismiss: () -> Void
-    var color: Color { banner.kind == .error ? Theme.danger : banner.kind == .warning ? Theme.warning : Theme.accent }
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: banner.kind == .info ? "info.circle" : "exclamationmark.triangle").foregroundStyle(color)
-            Text(banner.text).font(.system(size: 12)).foregroundStyle(Theme.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            Spacer()
-            Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }.buttonStyle(.plain).foregroundStyle(Theme.tertiary)
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+                Image(systemName: banner.kind == .info ? "info.circle" : banner.kind == .warning ? "exclamationmark.triangle" : "exclamationmark.circle")
+                    .font(.system(size: 12)).foregroundStyle(banner.kind == .info ? Theme.textSecondary : Theme.text)
+                Text(banner.text).font(Theme.caption).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Spacer(minLength: 0)
+                IconButton(symbol: "xmark", help: "Dismiss", action: dismiss).scaleEffect(0.8).frame(width: 22, height: 22)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            Hairline()
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(color.opacity(0.08))
+        .background(Theme.surface)
     }
 }
 
@@ -68,6 +81,7 @@ struct WorkspaceMenu: View {
     @Bindable var model: AppModel
     @State private var renaming: Workspace?
     @State private var newName = ""
+    @State private var hovering = false
 
     var body: some View {
         Menu {
@@ -87,17 +101,23 @@ struct WorkspaceMenu: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Text(model.current?.name ?? "Select workspace").font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(Theme.tertiary)
+                Text(model.current?.name ?? "Select workspace").font(Theme.body).lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
             }
+            .foregroundStyle(hovering ? Theme.text : Theme.textSecondary)
+            .padding(.horizontal, 8).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(hovering ? Theme.hover : .clear))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .onHover { hovering = $0 }
+        .motion(Theme.Motion.fast, value: hovering)
+        .help("Switch workspace")
         .popover(item: $renaming) { ws in
             HStack {
-                TextField("Name", text: $newName).textFieldStyle(.roundedBorder).frame(width: 200).onSubmit { commit(ws) }
-                Button("Rename") { commit(ws) }.keyboardShortcut(.defaultAction)
+                RTextField(placeholder: "Name", text: $newName).frame(width: 200).onSubmit { commit(ws) }
+                RButton(title: "Rename", kind: .primary) { commit(ws) }.keyboardShortcut(.defaultAction)
             }.padding(12)
         }
     }

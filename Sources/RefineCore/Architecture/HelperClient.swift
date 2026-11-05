@@ -30,8 +30,8 @@ public enum HelperError: Error, LocalizedError, Equatable {
 public actor HelperClient {
     public static let protocolVersion = 1
 
-    public struct Hello: Decodable, Sendable { public var protocol_: Int; public var helperVersion: String; public var giottoVersion: String; public var node: String
-        enum CodingKeys: String, CodingKey { case protocol_ = "protocol", helperVersion, giottoVersion, node }
+    public struct Hello: Decodable, Sendable { public var protocol_: Int; public var helperVersion: String; public var node: String
+        enum CodingKeys: String, CodingKey { case protocol_ = "protocol", helperVersion, node }
     }
 
     private let nodeOverride: String?

@@ -9,8 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private let hotKeys = HotKeyCenter()
     private var settingsWindow: NSWindow?
-    private var architectureWindow: NSWindow?
-    private var architectureModel: ArchitectureViewModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -26,7 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel = PanelController(model: model)
         model.onExpand = { [weak self] in self?.panel.expand() }
         model.onCollapse = { [weak self] in self?.panel.collapse() }
-        model.onOpenArchitecture = { [weak self] request in self?.showArchitecture(request) }
         setupMenuBar()
         setupHotKeys()
         observeVoice()
@@ -49,7 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Refine")
         let menu = NSMenu()
         menu.addItem(item("Open Refine", #selector(openPanel), ""))
-        menu.addItem(item("Architecture", #selector(openArchitecture), ""))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(openSettings), ","))
         menu.addItem(.separator())
@@ -64,7 +60,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func openPanel() { panel.expand() }
-    @objc private func openArchitecture() { model.visualize() }
     @objc private func quit() { NSApp.terminate(nil) }
 
     // MARK: Shortcuts
@@ -106,8 +101,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func openSettings() {
         if settingsWindow == nil {
             let view = SettingsView(model: model, onShortcutsChanged: { [weak self] in self?.registerHotKeys() })
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 560), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            w.title = "Refine Settings"
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 560), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            w.title = "Settings"
+            w.titlebarAppearsTransparent = true
+            w.appearance = NSAppearance(named: .darkAqua)
+            w.backgroundColor = NSColor(red: 9 / 255, green: 9 / 255, blue: 9 / 255, alpha: 1)
             w.contentView = NSHostingView(rootView: view)
             w.isReleasedWhenClosed = false
             w.delegate = self
@@ -119,35 +117,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    func showArchitecture(_ request: AppModel.ArchitectureRequest) {
-        if architectureModel == nil || architectureModel?.workspace.id != request.workspace.id {
-            let vm = ArchitectureViewModel(workspace: request.workspace, appModel: model)
-            architectureModel = vm
-            let w = architectureWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
-                                                   styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
-            w.titlebarAppearsTransparent = true
-            w.title = "Architecture — \(request.workspace.name)"
-            w.appearance = NSAppearance(named: .darkAqua)
-            w.contentView = NSHostingView(rootView: ArchitectureView(vm: vm))
-            w.isReleasedWhenClosed = false
-            w.delegate = self
-            if architectureWindow == nil { w.center() }
-            architectureWindow = w
-        }
-        panel.prepareForSecondaryWindow()
-        architectureModel?.planned = request.planned
-        Task { await architectureModel?.load() }
-        NSApp.activate(ignoringOtherApps: true)
-        architectureWindow?.makeKeyAndOrderFront(nil)
-    }
-
     func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-              window === settingsWindow || window === architectureWindow else { return }
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
         // Let AppKit finish ordering the closing window out before raising the notch again.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.settingsWindow?.isVisible != true,
-                  self.architectureWindow?.isVisible != true else { return }
+            guard let self, self.settingsWindow?.isVisible != true else { return }
             self.panel.restoreAfterSecondaryWindow()
         }
     }

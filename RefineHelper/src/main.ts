@@ -4,28 +4,17 @@
 import { createInterface } from 'node:readline';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { createRequire } from 'node:module';
 import { HELPER_VERSION, PROTOCOL_VERSION, HelperError, parseRequest, requireString, optionalString, stringArray, type Request, type Response } from './protocol/messages.js';
 import { analyze } from './analysis/analyze.js';
 import { SUPPORT } from './analysis/languages.js';
 import { info, diff } from './git/git.js';
-import { renderDiagram, type DiagramOptions } from './giotto/diagram.js';
-import type { CodebaseGraph, FileIndex } from './analysis/types.js';
-
-async function giottoVersion(): Promise<string> {
-  try {
-    const path = createRequire(import.meta.url).resolve('giotto/package.json');
-    return JSON.parse(await readFile(path, 'utf8')).version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
+import type { FileIndex } from './analysis/types.js';
 
 export async function handle(req: Request): Promise<unknown> {
   const p = req.params;
   switch (req.method) {
     case 'hello':
-      return { protocol: PROTOCOL_VERSION, helperVersion: HELPER_VERSION, giottoVersion: await giottoVersion(), node: process.version, languages: SUPPORT };
+      return { protocol: PROTOCOL_VERSION, helperVersion: HELPER_VERSION, node: process.version, languages: SUPPORT };
     case 'analyze': {
       // The file index lives in a file the app owns, so large indexes never cross stdio.
       const indexPath = optionalString(p, 'indexPath');
@@ -48,11 +37,6 @@ export async function handle(req: Request): Promise<unknown> {
       return info(requireString(p, 'root'));
     case 'git.diff':
       return { files: await diff(requireString(p, 'root'), optionalString(p, 'base') ?? null, stringArray(p, 'paths').slice(0, 200)) };
-    case 'diagram.render': {
-      const graph = p.graph as CodebaseGraph;
-      if (!graph || graph.schemaVersion !== 1 || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new HelperError('bad_request', 'params.graph must be a version 1 CodebaseGraph');
-      return renderDiagram(graph, (p.options ?? {}) as DiagramOptions);
-    }
   }
 }
 

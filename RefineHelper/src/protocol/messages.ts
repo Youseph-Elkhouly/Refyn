@@ -3,8 +3,8 @@
 export const PROTOCOL_VERSION = 1;
 export const HELPER_VERSION = '0.1.0';
 
-export type Method = 'hello' | 'analyze' | 'git.info' | 'git.diff' | 'diagram.render';
-export const METHODS: readonly Method[] = ['hello', 'analyze', 'git.info', 'git.diff', 'diagram.render'];
+export type Method = 'hello' | 'analyze' | 'git.info' | 'git.diff';
+export const METHODS: readonly Method[] = ['hello', 'analyze', 'git.info', 'git.diff'];
 
 export interface Request {
   protocol: number;

@@ -82,9 +82,6 @@ final class ArchitectureIntegrationTests: XCTestCase {
         let md = try String(contentsOf: AppPaths.workspaceDirectory(ws.id).appending(path: "workspace.md"), encoding: .utf8)
         XCTAssertTrue(md.contains("BillingService"))
 
-        let diagram = try await service.render(confirmed.graph, options: DiagramOptions(diff: confirmed.diff, planned: [PlannedComponent(id: "p1", name: "Invoices", type: .service, connectsTo: ["mod:src/services"])]))
-        XCTAssertTrue(diagram.svg.hasPrefix("<svg"))
-        XCTAssertTrue(diagram.elementIds.values.contains("mod:src/services"))
         XCTAssertNil(confirmed.graph.nodes.first { $0.name == "Invoices" }, "planned components never enter the verified graph")
     }
 

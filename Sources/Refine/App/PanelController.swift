@@ -10,7 +10,7 @@ final class NotchPanel: NSPanel {
 /// Places the panel around the MacBook notch, or as a pill at the top center on displays without one.
 @MainActor
 final class PanelController: NSObject, NSWindowDelegate {
-    static let expandedSize = NSSize(width: 660, height: 560)
+    static let expandedSize = NSSize(width: 640, height: 520)
 
     let panel: NotchPanel
     private let model: AppModel
@@ -73,10 +73,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
         let top = g.hasNotch ? screen.frame.maxY : screen.visibleFrame.maxY - 6
         let frame = NSRect(x: screen.frame.midX - size.width / 2, y: top - size.height, width: size.width, height: size.height)
-        if animated {
+        if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.28
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+                ctx.duration = Theme.Motion.slow
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 panel.animator().setFrame(frame, display: true)
             }
         } else {

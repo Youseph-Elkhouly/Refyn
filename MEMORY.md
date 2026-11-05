@@ -89,7 +89,7 @@ Sources/RefineCore/   (Foundation-only library; everything testable lives here)
 
 Sources/Refine/       (the app; SwiftUI + AppKit; @MainActor)
   main.swift                          manual NSApplication bootstrap (accessory policy) + `--snapshot` mode
-  App/AppDelegate.swift               wiring: model, panel, status item, hotkeys, Settings/Architecture windows, AppActions
+  App/AppDelegate.swift               wiring: model, panel, status item, hotkeys, Settings window, AppActions
   App/PanelController.swift           NotchPanel (NSPanel, canBecomeKey) placement, expand/collapse, focus restore
   App/HotKeyCenter.swift              Carbon RegisterEventHotKey; press + release (push-to-talk)
   App/Shortcut.swift                  keyCode + Carbon modifiers, display string, UserDefaults storage
@@ -99,12 +99,14 @@ Sources/Refine/       (the app; SwiftUI + AppKit; @MainActor)
   ViewModels/Preferences.swift        UserDefaults-backed settings, VoiceMode
   Services/Audio/AudioRecorder        AVAudioEngine tap → 16 kHz mono Float via AVAudioConverter, RMS levels
   Services/Transcription/SpeechTranscriber  actor wrapping WhisperKit 0.14.1 (download, load, transcribe)
-  Views/Theme.swift                   colors, IconButton, PillButtonStyle, Chip, SearchField, Waveform
+  Views/Theme.swift                   monochrome design system: tokens (Theme.*, Space, Radius, Motion), RefineMark, RButton/RefineButtonStyle,
+                                      IconButton, RTextField, REditor, SearchField, Segmented, RToggle, SectionHeader, SettingsGroup/Row,
+                                      StatusIndicator, EmptyState, LoadingState, Chip, KeyHint, Waveform, .motion() (honors Reduce Motion)
   Views/Notch/                        NotchRootView (+ CollapsedPill), ExpandedPanelView (+ header, BannerView, WorkspaceMenu)
   Views/Prompts/                      ComposerView, ResultView (+ PlanDetails)
   Views/Workspaces/NotesView.swift    NotesView, NoteEditor (debounced autosave), SavedPromptsView, SavedPromptEditor
-  Views/Architecture/                 ArchitectureView (+ ArchitectureViewModel), DiagramWebView, ReviewView
-  Views/Settings/SettingsView.swift   Model / Shortcuts / Voice / Analysis tabs, ShortcutRecorder
+  Views/Review/ReviewView.swift       change review after a hand-off (the Architecture window/diagram UI was removed; do not reintroduce)
+  Views/Settings/SettingsView.swift   Model / Shortcuts / Voice / Workspace tabs, ShortcutRecorder
 
 RefineHelper/         (Node ≥20, TypeScript → dist/, ESM)
   src/main.ts                         stdin line loop, dispatch, exits when stdin closes AND pending requests finish
@@ -326,3 +328,17 @@ id, "v1"); the app reuses a cached **model-built** plan for identical inputs.
 - Asked for a clear "done" message at the end of a build, followed by an updated, very detailed MEMORY.md
   committed into the repo.
 - Switches models mid-session (Sonnet 5.5 → Opus 5.5); commit attribution follows the active model.
+
+
+## UI redesign (2026-11-05): strict monochrome
+
+- Palette is grayscale only: bg #090909, surface #141414, input #1B1B1B, border #292929, hover #242424, text #FFF / #A1A1A1 / #666,
+  primary button white on #090909. No accent, gradient, or semantic colors: state is conveyed by symbols, weight and text.
+- All styling goes through `Theme` tokens and the components in `Views/Theme.swift`; do not hardcode colors/sizes in views.
+- Notch: collapsed = black pill with the `RefineMark` + status dot; expanded = header (wordmark, workspace menu, notes/saved/settings),
+  borderless editor ("What are you working on?"), controls (mic, mode segmented, ⌘↩ Optimize). Custom-mode techniques live in a popover to avoid layout jumps.
+- Result view shows the original request above the optimized prompt; actions: Copy, Save, Regenerate (skips the plan cache), agent menu, review, new.
+- Draft (`model.input`) is never cleared by navigation; only "New prompt" in the result view clears it. Info banners auto-dismiss after 4 s.
+- Animations are short ease curves (no springs); `.motion()` and the panel frame animation respect Reduce Motion.
+- `--snapshot` uses ImageRenderer, which cannot draw AppKit-backed views (TextEditor, ScrollView, Menu show as yellow placeholders), so use it for chrome/layout only.
+- Removed: ArchitectureView, DiagramWebView, PillButtonStyle, SectionLabel, color tokens accent/success/warning/danger.

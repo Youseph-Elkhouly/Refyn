@@ -42,11 +42,9 @@ final class AppModel {
     let store: WorkspaceStore
     private(set) var helper: HelperClient
     private(set) var architecture: ArchitectureService
-    var onOpenArchitecture: (ArchitectureRequest) -> Void = { _ in }
     var onExpand: () -> Void = {}
     var onCollapse: () -> Void = {}
 
-    struct ArchitectureRequest { var workspace: Workspace; var planned: [PlannedComponent] }
 
     init(store: WorkspaceStore) {
         self.store = store
@@ -71,7 +69,12 @@ final class AppModel {
 
     func shutdown() async { await helper.stop() }
 
-    func show(_ text: String, _ kind: Banner.Kind = .info) { banner = Banner(text: text, kind: kind) }
+    func show(_ text: String, _ kind: Banner.Kind = .info) {
+        let shown = Banner(text: text, kind: kind)
+        banner = shown
+        guard kind == .info else { return }
+        Task { try? await Task.sleep(for: .seconds(4)); if banner == shown { banner = nil } }
+    }
 
     // MARK: Workspaces
 
@@ -191,7 +194,7 @@ final class AppModel {
 
     // MARK: Optimizing
 
-    func optimize(useModel: Bool = true) async {
+    func optimize(useModel: Bool = true, regenerate: Bool = false) async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { show(PromptError.emptyInput.localizedDescription, .warning); return }
         guard !isOptimizing else { return }
@@ -207,7 +210,7 @@ final class AppModel {
                                           notes: notes, recentChanges: recent, iterationLimit: Preferences.iterationLimit)
         do {
             // Identical inputs reuse the stored plan instead of calling the model again.
-            if provider != nil, let cached = try await store.cachedPlan(cacheKey: optimizer.cacheKey(for: input)), cached.provider != "local" {
+            if provider != nil, !regenerate, let cached = try await store.cachedPlan(cacheKey: optimizer.cacheKey(for: input)), cached.provider != "local" {
                 plan = cached
                 show("Reused the plan from an identical earlier request.")
             } else {
@@ -236,11 +239,6 @@ final class AppModel {
                 show("Copied, but the repository baseline could not be recorded: \(error.localizedDescription)", .warning)
             }
         }
-    }
-
-    func visualize() {
-        guard let ws = current else { show("Choose a workspace first.", .warning); return }
-        onOpenArchitecture(ArchitectureRequest(workspace: ws, planned: plan?.plannedComponents ?? []))
     }
 
     // MARK: Review

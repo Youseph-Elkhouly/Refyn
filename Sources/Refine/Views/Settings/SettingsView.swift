@@ -4,16 +4,49 @@ import SwiftUI
 struct SettingsView: View {
     let model: AppModel
     let onShortcutsChanged: () -> Void
+    enum Tab: String, CaseIterable { case model = "Model", shortcuts = "Shortcuts", voice = "Voice", workspace = "Workspace" }
+    @State private var tab: Tab = .model
 
     var body: some View {
-        TabView {
-            ModelSettings(model: model).tabItem { Label("Model", systemImage: "sparkles") }
-            ShortcutSettings(onChange: onShortcutsChanged).tabItem { Label("Shortcuts", systemImage: "keyboard") }
-            VoiceSettings(voice: model.voice).tabItem { Label("Voice", systemImage: "mic") }
-            AnalysisSettings(model: model).tabItem { Label("Analysis", systemImage: "point.3.connected.trianglepath.dotted") }
+        VStack(spacing: 0) {
+            HStack {
+                Segmented(options: Tab.allCases, selection: $tab) { $0.rawValue }
+                Spacer()
+            }
+            .padding(.horizontal, Theme.Space.xl).padding(.top, 44).padding(.bottom, Theme.Space.md)
+            Hairline()
+            ScrollView {
+                Group {
+                    switch tab {
+                    case .model: ModelSettings(model: model)
+                    case .shortcuts: ShortcutSettings(onChange: onShortcutsChanged)
+                    case .voice: VoiceSettings(voice: model.voice)
+                    case .workspace: AnalysisSettings(model: model)
+                    }
+                }
+                .padding(Theme.Space.xl)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(20)
-        .frame(width: 560, height: 520)
+        .frame(width: 560, height: 560)
+        .background(Theme.background)
+        .foregroundStyle(Theme.text)
+        .preferredColorScheme(.dark)
+        .tint(Theme.text)
+    }
+}
+
+/// Section header, grouped rows and an optional footnote.
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    var footnote: String?
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            SectionHeader(title: title)
+            SettingsGroup { content }
+            if let footnote { Text(footnote).font(Theme.caption).foregroundStyle(Theme.textMuted).fixedSize(horizontal: false, vertical: true) }
+        }
     }
 }
 
@@ -27,29 +60,38 @@ struct ModelSettings: View {
     @State private var testing = false
 
     var body: some View {
-        Form {
-            Section("Gemini") {
-                SecureField(hasKey ? "Stored in Keychain — enter a new key to replace" : "API key", text: $apiKey)
-                HStack {
-                    Button("Save Key") {
-                        do { try Preferences.keychain.write(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), for: Preferences.geminiAccount); apiKey = ""; hasKey = true; status = "Saved to Keychain." }
-                        catch { status = error.localizedDescription }
-                    }.disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Button("Remove Key") { try? Preferences.keychain.delete(Preferences.geminiAccount); hasKey = false; status = "Removed." }.disabled(!hasKey)
-                    Button("Test") { Task { await test() } }.disabled(!hasKey || testing)
-                    if testing { ProgressView().controlSize(.small) }
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            SettingsSection(title: "Gemini", footnote: "Only your request and a small, relevant slice of workspace context (component names, paths, symbols, notes you marked) are sent. Source files are never uploaded.") {
+                SettingsRow(title: "API key", detail: hasKey ? "Stored in your Keychain" : "Not set") {
+                    StatusIndicator(kind: hasKey ? .ready : .idle, label: hasKey ? "Connected" : "No key")
                 }
-                TextField("Model", text: $modelName).onSubmit { Preferences.geminiModel = modelName }
-                    .onChange(of: modelName) { Preferences.geminiModel = modelName }
-                if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
-                Text("Only your request and a small, relevant slice of workspace context (component names, paths, symbols, notes you marked) are sent. Source files are never uploaded.")
-                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    RTextField(placeholder: hasKey ? "Enter a new key to replace" : "Paste API key", text: $apiKey, secure: true)
+                    HStack(spacing: Theme.Space.sm) {
+                        RButton(title: "Save key", kind: .primary) {
+                            do { try Preferences.keychain.write(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), for: Preferences.geminiAccount); apiKey = ""; hasKey = true; status = "Saved to Keychain." }
+                            catch { status = error.localizedDescription }
+                        }
+                        .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                        RButton(title: "Test", loading: testing) { Task { await test() } }.disabled(!hasKey)
+                        RButton(title: "Remove", kind: .ghost) { try? Preferences.keychain.delete(Preferences.geminiAccount); hasKey = false; status = "Removed." }.disabled(!hasKey)
+                        Spacer()
+                    }
+                    if let status { Text(status).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled) }
+                }
+                .padding(14)
+                Hairline()
+                SettingsRow(title: "Model", divider: false) {
+                    RTextField(placeholder: "Model", text: $modelName, mono: true).frame(width: 200)
+                        .onChange(of: modelName) { Preferences.geminiModel = modelName }
+                }
             }
-            Section("Prompts") {
-                Stepper("Fix-loop attempts: \(iterations)", value: $iterations, in: 1...10).onChange(of: iterations) { Preferences.iterationLimit = iterations }
+            SettingsSection(title: "Prompts") {
+                SettingsRow(title: "Fix-loop attempts", detail: "How many times an agent may retry before stopping.", divider: false) {
+                    Stepper("\(iterations)", value: $iterations, in: 1...10).onChange(of: iterations) { Preferences.iterationLimit = iterations }
+                }
             }
         }
-        .formStyle(.grouped)
     }
 
     func test() async {
@@ -72,17 +114,15 @@ struct ShortcutSettings: View {
     @State private var collapse = Preferences.collapseOnFocusLoss
 
     var body: some View {
-        Form {
-            Section("Global shortcuts") {
-                LabeledContent("Open / collapse Refine") { ShortcutRecorder(shortcut: $toggle) }
-                LabeledContent("Hold to dictate") { ShortcutRecorder(shortcut: $talk) }
-                Text("Shortcuts work in every app and need no Accessibility permission.").font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            SettingsSection(title: "Global shortcuts", footnote: "Shortcuts work in every app and need no Accessibility permission.") {
+                SettingsRow(title: "Open or collapse Refine") { ShortcutRecorder(shortcut: $toggle) }
+                SettingsRow(title: "Hold to dictate", divider: false) { ShortcutRecorder(shortcut: $talk) }
             }
-            Section("Panel") {
-                Toggle("Collapse when I switch to another app", isOn: $collapse)
+            SettingsSection(title: "Panel") {
+                SettingsRow(title: "Collapse when I switch apps", divider: false) { RToggle(title: "Collapse when I switch apps", isOn: $collapse) }
             }
         }
-        .formStyle(.grouped)
         .onChange(of: toggle) { Preferences.toggleShortcut = toggle; onChange() }
         .onChange(of: talk) { Preferences.pushToTalkShortcut = talk; onChange() }
         .onChange(of: collapse) { Preferences.collapseOnFocusLoss = collapse }
@@ -96,7 +136,9 @@ struct ShortcutRecorder: View {
 
     var body: some View {
         Button(recording ? "Press keys…" : shortcut.display) { recording ? stop() : start() }
-            .frame(minWidth: 120)
+            .buttonStyle(RefineButtonStyle(kind: .secondary))
+            .frame(minWidth: 110)
+            .help(recording ? "Press Escape to cancel" : "Click to record a new shortcut")
             .onDisappear(perform: stop)
     }
 
@@ -124,25 +166,33 @@ struct VoiceSettings: View {
     @State private var error: String?
 
     var body: some View {
-        Form {
-            Section("Dictation") {
-                Picker("Mode", selection: $mode) { ForEach(VoiceMode.allCases) { Text($0.rawValue).tag($0) } }
-                Text(mode.summary).font(.caption).foregroundStyle(.secondary)
-                Text("Recording starts only when you press the shortcut or the microphone button. Speech is transcribed on this Mac and never sent to a model automatically.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Speech model (WhisperKit, on-device)") {
-                Picker("Model", selection: $speechModel) {
-                    ForEach(SpeechModel.allCases) { m in Text(m.label + (downloaded.contains(m) ? " ✓" : "")).tag(m) }
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            SettingsSection(title: "Dictation", footnote: "Recording starts only when you press the shortcut or the microphone button. Speech is transcribed on this Mac and never sent to a model automatically.") {
+                SettingsRow(title: "After dictation", detail: mode.summary, divider: false) {
+                    Segmented(options: VoiceMode.allCases, selection: $mode) { $0.rawValue }
                 }
-                HStack {
+            }
+            SettingsSection(title: "Local speech model", footnote: "WhisperKit runs on-device. Larger models are more accurate and slower.") {
+                SettingsRow(title: "Model") {
+                    Menu {
+                        ForEach(SpeechModel.allCases) { m in
+                            Button { speechModel = m } label: {
+                                if m == speechModel { Label(m.label, systemImage: "checkmark") } else { Text(m.label) }
+                            }
+                        }
+                    } label: { Text(speechModel.label).font(Theme.body) }
+                    .menuStyle(.borderlessButton).fixedSize()
+                }
+                SettingsRow(title: "Status", detail: error, divider: false) {
                     if let p = voice.downloadProgress {
-                        ProgressView(value: p).frame(width: 200)
-                        Text("\(Int(p * 100))%")
+                        HStack(spacing: Theme.Space.sm) {
+                            ProgressView(value: p).frame(width: 140).tint(Theme.text)
+                            Text("\(Int(p * 100))%").font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+                        }
                     } else if downloaded.contains(speechModel) {
-                        Label("Downloaded", systemImage: "checkmark.circle").foregroundStyle(.green)
+                        StatusIndicator(kind: .ready, label: "Downloaded")
                     } else {
-                        Button("Download") {
+                        RButton(title: "Download", symbol: "arrow.down.circle") {
                             Task {
                                 do { try await voice.download(speechModel); downloaded.insert(speechModel); error = nil }
                                 catch { self.error = error.localizedDescription }
@@ -150,10 +200,8 @@ struct VoiceSettings: View {
                         }
                     }
                 }
-                if let error { Text(error).font(.caption).foregroundStyle(.red) }
             }
         }
-        .formStyle(.grouped)
         .onChange(of: mode) { Preferences.voiceMode = mode }
         .onChange(of: speechModel) { Preferences.speechModel = speechModel }
     }
@@ -165,22 +213,24 @@ struct AnalysisSettings: View {
     @State private var status = "Checking…"
 
     var body: some View {
-        Form {
-            Section("Node.js helper") {
-                TextField("Node.js path (blank = auto-detect)", text: $nodePath)
-                HStack {
-                    Button("Apply & Check") { Task { Preferences.nodePath = nodePath; await model.restartHelper(); await check() } }
-                    Text(status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            SettingsSection(title: "Analysis helper", footnote: "The helper parses code and reads git. It runs only while needed and never executes repository code.") {
+                SettingsRow(title: "Node.js path", detail: "Leave blank to auto-detect.") {
+                    RTextField(placeholder: "/usr/local/bin/node", text: $nodePath, mono: true).frame(width: 220)
                 }
-                Text("The helper parses code, reads git and renders diagrams with Giotto. It runs only while needed and never executes repository code.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: Theme.Space.md) {
+                    RButton(title: "Apply and check") { Task { Preferences.nodePath = nodePath; await model.restartHelper(); await check() } }
+                    Text(status).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(14)
             }
-            Section("Coverage") {
+            SettingsSection(title: "Coverage") {
                 Text("TypeScript and JavaScript are parsed with the TypeScript compiler. Python, Swift and Prisma use pattern-based extraction. Other languages are counted but not analyzed. Secrets (.env, keys, credentials), dependencies and build output are always excluded.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
             }
         }
-        .formStyle(.grouped)
         .task { await check() }
     }
 

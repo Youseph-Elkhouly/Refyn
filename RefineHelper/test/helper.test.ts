@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { analyze } from '../src/analysis/analyze.js';
-import { renderDiagram } from '../src/giotto/diagram.js';
 import { routeMatches } from '../src/analysis/graph.js';
 import { skipReason } from '../src/analysis/walk.js';
 import { parseRequest } from '../src/protocol/messages.js';
@@ -82,17 +81,13 @@ test('reuses unchanged files and reports what changed', async () => {
   }
 });
 
-test('renders the graph with Giotto, highlighting changes and planned work', async () => {
+test('analysis extracts bounded context metadata without reading secrets', async () => {
   const root = await copyFixture();
   try {
-    const { graph } = await analyze(root, 'ws-1');
-    const out = renderDiagram(graph, { highlight: { modified: ['mod:src/services'] }, planned: [{ id: 'billing', name: 'Billing', type: 'service', connectsTo: ['mod:src/db'] }] });
-    assert.match(out.svg, /^<svg /);
-    const diagramId = Object.entries(out.elementIds).find(([, g]) => g === 'mod:src/services')?.[0];
-    assert.ok(diagramId && out.svg.includes(`data-id="${diagramId}"`));
-    const planned = (out.doc.elements as { id: string; tags?: string[] }[]).find((e) => e.tags?.includes('planned'));
-    assert.ok(planned, 'planned component is drawn');
-    assert.ok(!graph.nodes.some((n) => n.name === 'Billing'), 'planned work never enters the graph');
+    const { graph, index } = await analyze(root, 'ws-1');
+    assert.ok(graph.metadata.languages.some((language) => language.name === 'TypeScript' && language.analyzed));
+    assert.ok(graph.nodes.find((node) => node.id === 'mod:src/services')?.symbols.some((symbol) => symbol.name === 'listUsers'));
+    assert.ok(!Object.keys(index.files).some((path) => path.includes('.env')));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -124,7 +119,7 @@ test('the helper process answers over stdio and exits when stdin closes', async 
   const a = lines.find((l) => l.id === 'a'), b = lines.find((l) => l.id === 'b');
   assert.equal(a.ok, true);
   assert.equal(a.result.protocol, 1);
-  assert.notEqual(a.result.giottoVersion, 'unknown');
+  assert.equal(typeof a.result.helperVersion, 'string');
   assert.equal(b.ok, false);
   assert.equal(b.error.code, 'unknown_method');
 });

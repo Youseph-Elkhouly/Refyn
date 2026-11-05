@@ -9,46 +9,6 @@ public struct AnalysisOutcome: Decodable, Sendable {
     public var git: Git
 }
 
-public struct DiagramOptions: Encodable, Sendable {
-    public struct Removed: Encodable, Sendable { public var id: String; public var name: String; public var type: ComponentType }
-    public struct Highlight: Encodable, Sendable {
-        public var added: [String] = []
-        public var modified: [String] = []
-        public var removed: [Removed] = []
-        public var addedEdges: [String] = []
-        public init() {}
-    }
-    public struct Planned: Encodable, Sendable { public var id: String; public var name: String; public var type: ComponentType; public var connectsTo: [String] }
-    public var title: String?
-    public var highlight: Highlight?
-    public var planned: [Planned]?
-    public var showTests: Bool
-    public var dark: Bool
-
-    public init(title: String? = nil, diff: ArchitectureDiff? = nil, planned: [PlannedComponent] = [], showTests: Bool = false, dark: Bool = true) {
-        self.title = title
-        self.showTests = showTests
-        self.dark = dark
-        if let diff, !diff.isEmpty {
-            var h = Highlight()
-            h.added = diff.addedNodes.map(\.id)
-            h.modified = diff.modifiedNodes.map(\.id)
-            h.removed = diff.removedNodes.map { Removed(id: $0.id, name: $0.name, type: $0.type) }
-            h.addedEdges = diff.addedEdges.map(\.id)
-            highlight = h
-        }
-        self.planned = planned.isEmpty ? nil : planned.map { Planned(id: $0.id, name: $0.name, type: $0.type, connectsTo: $0.connectsTo) }
-    }
-}
-
-public struct DiagramResult: Decodable, Sendable {
-    public var svg: String
-    /// Diagram element id → graph node id.
-    public var elementIds: [String: String]
-    public var hidden: Int
-    public var warnings: [String]
-}
-
 struct FileDiff: Decodable, Sendable {
     var path: String
     var additions: Int?
@@ -70,7 +30,6 @@ public actor ArchitectureService {
 
     private struct AnalyzeParams: Encodable, Sendable { let root: String; let workspaceId: String; let indexPath: String }
     private struct DiffParams: Encodable, Sendable { let root: String; let base: String?; let paths: [String] }
-    private struct RenderParams: Encodable, Sendable { let graph: CodebaseGraph; let options: DiagramOptions }
     private struct DiffResponse: Decodable, Sendable { let files: [FileDiff] }
 
     /// Incremental scan: unchanged files are not re-read or re-parsed (the helper keeps a per-workspace file index).
@@ -168,10 +127,6 @@ public actor ArchitectureService {
                 workspaceID: workspace.id, version: 0, label: "Rejected: \(label)", verified: false, graph: review.graph,
                 diff: ArchitectureDiff.between(previous?.graph, review.graph), executionID: record.id))
         }
-    }
-
-    public func render(_ graph: CodebaseGraph, options: DiagramOptions) async throws -> DiagramResult {
-        try await helper.request("diagram.render", RenderParams(graph: graph, options: options), as: DiagramResult.self, timeout: .seconds(60))
     }
 
     /// Rewrites workspace.md from the latest verified graph, notes and confirmed changes.
