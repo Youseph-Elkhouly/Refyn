@@ -40,6 +40,32 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertEqual(PromptOptimizer.nonRedundant(["No retry for 4xx responses"], against: ["Do not retry 4xx responses"]), [])
     }
 
+    func testVagueBugfixAsksForMissingDetailsDeterministically() {
+        let analysis = RequestAnalysis("fix the login bug")
+        XCTAssertEqual(analysis.taskType, .bugfix)
+        XCTAssertEqual(analysis.gaps.map(\.id), ["bug.reproduction", "bug.expected_actual", "bug.error_evidence"])
+        XCTAssertTrue(analysis.gaps.allSatisfy { !$0.question.isEmpty })
+    }
+
+    func testSpecifiedBugfixHasNoChecklistGaps() {
+        let analysis = RequestAnalysis("When I submit invalid credentials, the form shows success instead of an error. Expected: show 'Invalid credentials'; actual: it redirects to the dashboard. Console error: AUTH-401.")
+        XCTAssertEqual(analysis.taskType, .bugfix)
+        XCTAssertTrue(analysis.gaps.isEmpty, "Covered reproduction, expected/actual result, and error evidence should not be asked again.")
+    }
+
+    func testSimpleRenameDoesNotTriggerClarification() {
+        let analysis = RequestAnalysis("Rename Save to Continue")
+        XCTAssertEqual(analysis.taskType, .refactor)
+        XCTAssertTrue(analysis.gaps.isEmpty)
+    }
+
+    func testWorkspaceFrameworkCanCoverPlatformChecklistItem() {
+        let analysis = RequestAnalysis("improve the settings screen")
+        let context = RetrievedContext(workspaceName: "Sample", languages: ["Swift"], frameworks: ["SwiftUI"], components: [], notes: [], analyzed: true)
+        XCTAssertFalse(analysis.gaps(context: context).contains { $0.id == "ui.platform" })
+        XCTAssertTrue(analysis.gaps.contains { $0.id == "ui.platform" })
+    }
+
     func testAutoKeepsSimpleRequestSimple() async throws {
         let plan = try await offline.optimize(.init(text: "Rename this variable", mode: .auto))
         XCTAssertEqual(plan.selectedTechniques, [.zeroShot])

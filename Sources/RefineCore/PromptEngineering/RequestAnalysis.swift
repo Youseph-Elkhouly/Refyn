@@ -11,6 +11,10 @@ public struct RequestAnalysis: Sendable, Hashable {
     public var complexity: Int
     public var mentionsTests: Bool
     public var hasConditions: Bool
+    /// Most important unanswered task-specific details. Always available without an LLM.
+    public var gaps: [RequirementGap] { RequirementChecklist.gaps(for: self) }
+
+    public func gaps(context: RetrievedContext?) -> [RequirementGap] { RequirementChecklist.gaps(for: self, context: context) }
 
     public init(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
