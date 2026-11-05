@@ -35,6 +35,11 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertEqual(plan.codeReferences, [])
     }
 
+    func testGeneratedPlanDropsParaphrasedConstraintsAndSuggestions() {
+        XCTAssertTrue(PromptOptimizer.semanticallySimilar("No changes to upload API", "Do not change upload API"))
+        XCTAssertEqual(PromptOptimizer.nonRedundant(["No retry for 4xx responses"], against: ["Do not retry 4xx responses"]), [])
+    }
+
     func testAutoKeepsSimpleRequestSimple() async throws {
         let plan = try await offline.optimize(.init(text: "Rename this variable", mode: .auto))
         XCTAssertEqual(plan.selectedTechniques, [.zeroShot])

@@ -110,17 +110,19 @@ public struct PromptOptimizer: Sendable {
 
     static func plan(from m: ModelPlan, analysis: RequestAnalysis, context: RetrievedContext) -> PromptPlan {
         let componentIDs = Set(context.components.map(\.id))
+        let confirmed = m.confirmedRequirements
+        let taskText = m.tasks.map { "\($0.title) \($0.detail)" }
         return PromptPlan(
             originalPrompt: analysis.text,
             intent: m.intent,
             taskType: TaskType(rawValue: m.taskType) ?? analysis.taskType,
             codeReferences: m.codeReferences.map { CodeReference(path: $0.path, symbol: $0.symbol?.nilIfEmpty, reason: $0.reason, source: .model) },
             tasks: m.tasks.map { PlanTask(id: $0.id, title: $0.title, detail: $0.detail, dependsOn: $0.dependsOn) },
-            constraints: dedupe(analysis.constraints + m.constraints),
+            constraints: nonRedundant(dedupe(analysis.constraints + m.constraints), against: confirmed),
             successCriteria: m.successCriteria,
             missingInformation: m.missingInformation,
             confirmedRequirements: m.confirmedRequirements,
-            suggestedDecisions: m.suggestedDecisions,
+            suggestedDecisions: nonRedundant(m.suggestedDecisions, against: confirmed + taskText),
             plannedComponents: (m.plannedComponents ?? []).enumerated().map { i, p in
                 PlannedComponent(id: "p\(i + 1)", name: p.name, type: ComponentType(rawValue: p.type) ?? .library, connectsTo: p.connectsTo.filter(componentIDs.contains))
             },
@@ -184,5 +186,26 @@ public struct PromptOptimizer: Sendable {
     static func dedupe(_ items: [String]) -> [String] {
         var seen = Set<String>()
         return items.filter { seen.insert($0.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))).inserted }
+    }
+
+    static func nonRedundant(_ items: [String], against reference: [String]) -> [String] {
+        var kept: [String] = []
+        for item in items where !(reference + kept).contains(where: { semanticallySimilar(item, $0) }) { kept.append(item) }
+        return kept
+    }
+
+    static func semanticallySimilar(_ lhs: String, _ rhs: String) -> Bool {
+        func words(_ value: String) -> Set<String> {
+            let ignored: Set<String> = ["a", "an", "the", "to", "of", "for", "and", "or", "do", "does", "not", "no", "is", "are", "be", "with", "during", "up", "on", "in"]
+            return Set(value.lowercased().split { !$0.isLetter && !$0.isNumber }.map { raw in
+                var word = String(raw)
+                if word.hasSuffix("ies"), word.count > 4 { word = String(word.dropLast(3)) + "y" }
+                else if word.hasSuffix("s"), word.count > 3 { word.removeLast() }
+                return word
+            }.filter { !ignored.contains($0) })
+        }
+        let a = words(lhs), b = words(rhs)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        return Double(a.intersection(b).count) / Double(a.union(b).count) >= 0.66
     }
 }

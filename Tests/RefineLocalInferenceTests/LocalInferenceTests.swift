@@ -42,6 +42,9 @@ final class LocalInferenceTests: XCTestCase {
         XCTAssertFalse(plan.validation.repaired, "The model should preserve the request without relying on a verbatim repair.")
         XCTAssertFalse(plan.tasks.isEmpty)
         XCTAssertFalse(plan.verificationInstructions.isEmpty)
+        XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("2 retries") }, "The retry limit must remain an acceptance criterion.")
+        XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("offline") }, "The offline case must remain an acceptance criterion.")
+        XCTAssertFalse(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("progress UI") && $0.localizedCaseInsensitiveContains("updated") }, "Keeping the UI must not be rewritten as changing it.")
         XCTAssertTrue(plan.verificationInstructions.contains { $0.localizedCaseInsensitiveContains("offline") }, "The offline case must have an explicit verification step.")
         XCTAssertTrue(plan.missingInformation.contains { $0.localizedCaseInsensitiveContains("offline") } ||
                       plan.verificationInstructions.contains { $0.localizedCaseInsensitiveContains("existing") || $0.localizedCaseInsensitiveContains("observe") },
