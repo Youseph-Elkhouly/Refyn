@@ -123,6 +123,27 @@ final class LocalInferenceTests: XCTestCase {
     }
 
     @MainActor
+    func testQwenTurnsReferencedWorkspaceNotesIntoSpecificRequirements() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
+            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the local Qwen note-context check.")
+        }
+        let manager = LocalModelManager()
+        await manager.install()
+        guard manager.state == .ready else { throw LLMError.unavailable(manager.state.title) }
+        let note = Note(workspaceID: UUID(), title: "Project note",
+                        body: "Implementations: Be able to view older prompts aswell as send off notifications when the users prompt they are trying to optimize is compelte.")
+        let request = "Implement the implementations from notes"
+        let plan = try await PromptOptimizer(provider: LocalLLMProvider(manager: manager)).optimize(.init(
+            text: request, mode: .advanced, notes: [note]))
+
+        print("Referenced-note feature output:\n\(plan.optimizedPrompt)")
+        XCTAssertEqual(plan.provider, LocalModelManager.modelID)
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("older prompts"))
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("notification"))
+        XCTAssertFalse(plan.confirmedRequirements.isEmpty)
+    }
+
+    @MainActor
     func testClarificationQualityEvaluationEightUnderspecifiedAndTwoClearRequests() async throws {
         guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
             throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the underspecification and prompt quality evaluation.")

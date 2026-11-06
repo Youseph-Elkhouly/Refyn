@@ -43,8 +43,20 @@ public enum RequirementChecklist {
     /// non-risky edits deliberately bypass clarification to keep Auto/Basic immediate.
     public static func gaps(for analysis: RequestAnalysis, context: RetrievedContext? = nil) -> [RequirementGap] {
         if isSimpleRename(analysis.text) || (analysis.complexity < 2 && analysis.taskType == .other) { return [] }
-        return Array(items(for: analysis.taskType).filter { !covered($0.detector, request: analysis.text, context: context) }
+        let supportingText = relevantSupportingText(for: analysis.text, notes: context?.notes ?? [])
+        return Array(items(for: analysis.taskType).filter { !covered($0.detector, request: supportingText, context: context) }
             .prefix(3).map { RequirementGap(id: $0.id, taskType: analysis.taskType, question: $0.question) })
+    }
+
+    private static func relevantSupportingText(for request: String, notes: [String]) -> String {
+        let explicitlyReferencesNotes = request.range(of: #"\bnotes?\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let requestWords = Set(request.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 3 })
+        let relevant = notes.filter { note in
+            if explicitlyReferencesNotes { return true }
+            let noteWords = Set(note.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 3 })
+            return requestWords.intersection(noteWords).count >= 2
+        }
+        return ([request] + relevant).joined(separator: "\n")
     }
 
     private static func isSimpleRename(_ text: String) -> Bool {
@@ -124,8 +136,8 @@ public enum RequirementChecklist {
         case .errorEvidence:
             let words = Set(text.split { !$0.isLetter && !$0.isNumber }.map(String.init))
             return !words.isDisjoint(with: ["error", "exception", "stack", "trace", "log", "crash"]) || text.contains("\"") || text.contains("'")
-        case .acceptance: return contains(["acceptance", "done when", "success criteria", "should ", "must ", "will ", "test ", "tests ", "works when"])
-        case .scope: return contains(["only ", "scope", "in scope", "out of scope", "leave ", "without changing", "don't change", "do not change", "keep ", "preserve "])
+        case .acceptance: return contains(["acceptance", "done when", "success criteria", "should ", "must ", "will ", "test ", "tests ", "works when", "be able to", "enable ", "allow ", "support "])
+        case .scope: return contains(["only ", "scope", "in scope", "out of scope", "leave ", "without changing", "don't change", "do not change", "keep ", "preserve ", "as well as", "both "])
         case .compatibility: return contains(["compatible", "compatibility", "backward", "backwards", "existing behavior", "existing api", "don't break", "do not break", "preserve ", "keep "])
         case .metric: return contains(["latency", "throughput", "memory", "cpu", "fps", "p95", "p99", "requests per", "time to", "metric"])
         case .target: return contains(["target", "under ", "below ", "less than", "at most", "no more than", "by ", "%", "ms", "seconds", "twice", "double"])

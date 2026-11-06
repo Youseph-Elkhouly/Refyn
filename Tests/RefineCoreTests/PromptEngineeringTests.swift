@@ -147,6 +147,35 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertTrue(request.modelPrompt.contains(answer.answer))
     }
 
+    func testPromptExplicitlyReferencingNotesTreatsTheirActionItemsAsUserRequirements() async throws {
+        let note = Note(workspaceID: UUID(), title: "Project note",
+                        body: "Be able to view older prompts as well as send notifications when optimization completes.")
+        let generated = ModelPlan(intent: "Add prompt history and completion notifications", taskType: "feature", role: "",
+                                  objective: "Let users view older prompts and receive a notification when optimization finishes.",
+                                  confirmedRequirements: ["Users can view older prompts", "Send a notification when prompt optimization completes"],
+                                  tasks: [.init(id: "t1", title: "Add a way to view older prompts"),
+                                          .init(id: "t2", title: "Notify users when optimization completes")])
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated))).optimize(.init(
+            text: "Implement the implementations from notes", mode: .advanced, notes: [note]))
+
+        XCTAssertEqual(plan.provider, "stub-model")
+        XCTAssertTrue(plan.confirmedRequirements.contains { $0.localizedCaseInsensitiveContains("older prompts") }, "\(plan.confirmedRequirements)")
+        XCTAssertTrue(plan.confirmedRequirements.contains { $0.localizedCaseInsensitiveContains("notification") }, "\(plan.confirmedRequirements)")
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("older prompts"))
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("notification"))
+    }
+
+    func testReferencedNoteAnswersFeatureOutcomeAndScopeQuestions() {
+        let analysis = RequestAnalysis("Implement the implementations from notes")
+        let context = RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [],
+                                       notes: ["Project note: Be able to view older prompts as well as send notifications when optimization completes."],
+                                       analyzed: false)
+        let gapIDs = Set(analysis.gaps(context: context).map(\.id))
+        XCTAssertFalse(gapIDs.contains("feature.acceptance"))
+        XCTAssertFalse(gapIDs.contains("feature.scope"))
+        XCTAssertTrue(gapIDs.contains("feature.compatibility"))
+    }
+
     func testDisablingInlineQuestionsStillSuppliesGapsToTheGeneratedPrompt() async throws {
         let request = "Add team invitations to workspace settings"
         let plan = try await offline.optimize(.init(text: request, mode: .auto))

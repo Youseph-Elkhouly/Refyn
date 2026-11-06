@@ -165,7 +165,8 @@ public struct PromptOptimizer: Sendable {
         let confirmed = m.confirmedRequirements
         let taskText = m.tasks.map { "\($0.title) \($0.detail)" }
         let userConfirmed = dedupe(analysis.confirmedRequirements)
-        let userStatements = analysis.constraints + userConfirmed + [analysis.text]
+        let explicitlyReferencesNotes = analysis.text.range(of: #"\bnotes?\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let userStatements = analysis.constraints + userConfirmed + [analysis.text] + (explicitlyReferencesNotes ? context.notes : [])
         func grounded(_ candidate: String) -> Bool {
             userStatements.contains { source in
                 source.localizedCaseInsensitiveContains(candidate) || semanticallySimilar(candidate, source)
