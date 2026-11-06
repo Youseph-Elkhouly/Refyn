@@ -15,7 +15,7 @@ public enum PromptComposer {
         var s: [String] = []
 
         if t.contains(.zeroShot) && t.isSubset(of: [.zeroShot, .contextInjection, .constraints])
-            && plan.confirmedRequirements.isEmpty && plan.missingInformation.isEmpty {
+            && plan.confirmedRequirements.isEmpty && plan.missingInformation.isEmpty && plan.guidance == nil {
             // Zero-shot: one clear instruction, nothing else unless constraints or context matter.
             var text = parts.objective
             if t.contains(.constraints), !plan.constraints.isEmpty { text += "\n\nConstraints: " + plan.constraints.joined(separator: " ") }
@@ -33,6 +33,12 @@ public enum PromptComposer {
             if !plan.suggestedDecisions.isEmpty { s.append(section("Suggested approach (adjust if the code shows a better fit)", bullets(plan.suggestedDecisions))) }
         }
         if t.contains(.constraints), !plan.constraints.isEmpty { s.append(section("Constraints", bullets(plan.constraints))) }
+        if let g = plan.guidance {
+            s.append(section("Investigate first — \(g.topic)", bullets(g.investigate)))
+            s.append(section("What good looks like (suggested bar, not stated by the user — adapt it to this product)", bullets(g.goodLooksLike)))
+            s.append(section("Examples of the target quality", bullets(g.examples)))
+            s.append(section("Avoid", bullets(g.avoid)))
+        }
         if t.contains(.toolUse) {
             s.append(section("Working method", """
             Work in short act–observe cycles: search and read the relevant code before editing, make one focused change, \

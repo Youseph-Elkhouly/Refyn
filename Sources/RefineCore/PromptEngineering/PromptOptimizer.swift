@@ -39,7 +39,7 @@ public struct PromptOptimizer: Sendable {
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         let parts = [analysis.text, input.mode.rawValue, input.customTechniques.map(\.rawValue).sorted().joined(separator: ","), context.hash,
                      input.userAnswers.map { "\($0.id):\($0.answer)" }.joined(separator: "\n"), input.unansweredQuestions.joined(separator: "\n"),
-                     String(input.iterationLimit), provider?.identifier ?? "local", "v2"]
+                     String(input.iterationLimit), provider?.identifier ?? "local", "v3"]
         return SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -65,9 +65,10 @@ public struct PromptOptimizer: Sendable {
         // A short prompt can still be an underspecified feature or bug fix. The app's
         // clarification step runs before this pipeline; after answers (or an explicit skip),
         // do not bypass the model and return the original sentence as a "Local rules" result.
-        let needsEngineering = !pendingGaps.isEmpty || !input.userAnswers.isEmpty || !unansweredQuestions.isEmpty
+        let guidance = Playbook.match(analysis, context: context)
+        let needsEngineering = guidance != nil || !pendingGaps.isEmpty || !input.userAnswers.isEmpty || !unansweredQuestions.isEmpty
         if input.mode != .custom && needsEngineering && techniques.allSatisfy({ [.zeroShot, .contextInjection, .constraints].contains($0) }) {
-            techniques = PromptTechnique.allCases.filter { [.structured, .constraints, .acceptanceCriteria].contains($0) || ($0 == .contextInjection && !context.isEmpty) }
+            techniques = PromptTechnique.allCases.filter { [.structured, .constraints, .acceptanceCriteria].contains($0) || ($0 == .outputFormat && guidance != nil) || ($0 == .contextInjection && !context.isEmpty) }
         }
         let directRewrite = !needsEngineering && techniques.contains(.zeroShot) && techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
         if let provider {
@@ -128,13 +129,18 @@ public struct PromptOptimizer: Sendable {
         plan.selectedTechniques = techniques
         plan.iterationLimit = iterationLimit
         plan.provider = providerID
+        plan.guidance = guidance
         plan.cacheKey = cacheKey(for: input)
         plan.missingInformation = Self.dedupe(plan.missingInformation + unansweredQuestions)
 
         // 8: construction.
         let modelRole = modelPlan?.role.trimmingCharacters(in: .whitespacesAndNewlines)
         let role = modelRole.flatMap { $0.count >= 16 && $0.lowercased() != "refine" ? $0 : nil } ?? Self.defaultRole(context)
-        let parts = PromptComposer.Parts(role: role, objective: modelPlan?.objective ?? analysis.intent,
+        var objective = modelPlan?.objective ?? analysis.intent
+        if guidance != nil, modelPlan == nil {
+            objective += (objective.hasSuffix(".") ? "" : ".") + " The request does not say what exactly is wrong, so first establish that, then fix it."
+        }
+        let parts = PromptComposer.Parts(role: role, objective: objective,
                                          exampleReport: modelPlan?.exampleReport, context: context)
         var prompt = PromptComposer.compose(plan, parts: parts)
         plan.chainedPrompts = PromptComposer.chain(plan, parts: parts)

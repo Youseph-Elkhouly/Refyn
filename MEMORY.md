@@ -368,3 +368,10 @@ id, "v1"); the app reuses a cached **model-built** plan for identical inputs.
 - Tried and reverted: trimming the JSON schema (dropping missingInformation/plannedComponents/exampleReport/intentPreserved) and "omit empty keys". No measurable speed gain and the refactor case lost its tasks.
 - Remaining levers, not done: prefix KV-cache reuse for the static instructions (~1–2s), shorter output (drop intent/role), a smaller fast model (Qwen3-1.7B) as an option, streaming progress in the UI.
 - To run MLX tests in release: copy mlx.metallib into `.build/.../release/RefynPackageTests.xctest/Contents/MacOS/` and pass `-Xswiftc -enable-testing`.
+
+## Playbooks: depth for vague requests (2026-11-06)
+- Problem: output only restructured the user's words ("the animation for opening the notch is bad" came back as an objective plus generic sections).
+- `Playbook.swift` (RefineCore) adds `PlaybookGuidance` (investigate / goodLooksLike / examples / avoid) for vague requests (complexity <= 4) on four topics: animation/motion, performance, visual design, bug. Deterministic, instant, works without the model, stack-specific lines only when the workspace stack is known.
+- Product rule kept: this is general engineering knowledge shown in sections titled "suggested bar, not stated by the user"; it never enters `confirmedRequirements`. `PromptPlan.guidance` is optional so stored plans still decode. Cache key bumped to v3.
+- A matched playbook forces the engineering path (no one-line direct rewrite), adds `.outputFormat`, and appends "first establish what is wrong" to the objective when no model objective exists.
+- Not done: letting the model tailor the examples to the request (costs tokens/latency), more playbooks (API, data, auth, testing), user-editable playbooks.
