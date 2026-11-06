@@ -85,7 +85,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = Theme.Motion.panel
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.78, 0.22, 1)
                 panel.animator().setFrame(frame, display: true)
             }
         } else {

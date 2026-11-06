@@ -14,15 +14,18 @@ struct NotchRootView: View {
                 ExpandedPanelView(model: model)
                     .padding(.top, g.hasNotch ? g.notchHeight : 0)
                     .background(Theme.background.clipShape(shape(g)))
-                    .transition(.opacity)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.975, anchor: .top)),
+                        removal: .opacity.combined(with: .scale(scale: 0.985, anchor: .top))
+                    ))
             } else {
                 CollapsedPill(model: model, geometry: g)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .clipShape(shape(g))
         .overlay(shape(g).stroke(model.isExpanded ? Theme.border : .clear, lineWidth: 1))
-        .animation(reduceMotion ? nil : .easeInOut(duration: Theme.Motion.panel), value: model.isExpanded)
+        .animation(reduceMotion ? nil : .timingCurve(0.18, 0.78, 0.22, 1, duration: Theme.Motion.panel), value: model.isExpanded)
         .preferredColorScheme(.dark)
         .tint(Theme.text)
     }
