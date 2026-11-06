@@ -137,7 +137,8 @@ final class PromptEngineeringTests: XCTestCase {
         let plan = try await optimizer.optimize(.init(text: "fix the login bug", mode: .advanced, userAnswers: [answer], unansweredQuestions: [openQuestion]))
         XCTAssertTrue(plan.confirmedRequirements.contains { $0.contains(answer.answer) })
         XCTAssertTrue(plan.missingInformation.contains(openQuestion))
-        XCTAssertTrue(plan.optimizedPrompt.contains(openQuestion))
+        XCTAssertFalse(plan.optimizedPrompt.contains("Open questions"))
+        XCTAssertFalse(plan.optimizedPrompt.contains(openQuestion))
 
         let analysis = RequestAnalysis("fix the login bug", confirmedRequirements: ["What reproduces it? \(answer.answer)"])
         let request = OptimizationRequest(analysis: analysis, mode: .advanced, techniques: [.structured],
@@ -180,7 +181,7 @@ final class PromptEngineeringTests: XCTestCase {
         let request = "Add team invitations to workspace settings"
         let plan = try await offline.optimize(.init(text: request, mode: .auto))
         XCTAssertTrue(plan.missingInformation.contains { $0.localizedCaseInsensitiveContains("observable result") })
-        XCTAssertTrue(plan.optimizedPrompt.contains("## Open questions"))
+        XCTAssertFalse(plan.optimizedPrompt.contains("## Open questions"))
         XCTAssertNotEqual(plan.optimizedPrompt, request)
     }
 
@@ -335,6 +336,8 @@ final class PromptEngineeringTests: XCTestCase {
                                       iterationLimit: 2)
         XCTAssertTrue(req.modelPrompt.contains("keep Widget.swift and the 250ms debounce"))
         XCTAssertTrue(req.modelPrompt.contains("workspace_context_json_untrusted"))
+        XCTAssertTrue(req.modelPrompt.contains("do not return generic questions"))
+        XCTAssertTrue(req.modelPrompt.contains("populate missingInformation"))
         XCTAssertTrue(req.modelPrompt.contains("Iteration limit: 2"))
         XCTAssertTrue(req.modelPrompt.contains("Example of the desired behavior"))
         XCTAssertFalse(req.modelPrompt.contains("responseSchema"))

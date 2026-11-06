@@ -19,10 +19,10 @@ enum Theme {
     // Typography (system font; medium for headings, regular for body)
     static let title = Font.system(size: 15, weight: .medium)
     static let heading = Font.system(size: 13, weight: .medium)
-    static let body = Font.system(size: 13)
-    static let editor = Font.system(size: 15)
-    static let caption = Font.system(size: 11.5)
-    static let mono = Font.system(size: 12.5, design: .monospaced)
+    static let body = Font.system(size: 14)
+    static let editor = Font.system(size: 16)
+    static let caption = Font.system(size: 12)
+    static let mono = Font.system(size: 13, design: .monospaced)
     static let lineSpacing: CGFloat = 3
 
     enum Space {
@@ -237,7 +237,7 @@ struct REditor: View {
         ZStack(alignment: .topLeading) {
             editor
             if text.isEmpty {
-                Text(placeholder).font(font).foregroundStyle(Theme.textMuted)
+                Text(placeholder).font(font).foregroundStyle(Theme.textSecondary)
                     .padding(.leading, inset + 5).padding(.top, inset)
                     .allowsHitTesting(false).accessibilityHidden(true)
             }

@@ -141,7 +141,6 @@ struct PlanDetails: View {
             row("Tasks", plan.tasks.map { "\($0.id): \($0.title)\($0.dependsOn.isEmpty ? "" : " ← \($0.dependsOn.joined(separator: ", "))")" })
             row("Success criteria", plan.successCriteria)
             row("Verification", plan.verificationInstructions)
-            row("Missing information", plan.missingInformation)
             row("Code references", plan.codeReferences.map { "\($0.path)\($0.symbol.map { " · \($0)" } ?? "") — \($0.reason) [\($0.source.rawValue)]" })
             row("Planned components (not in the codebase yet)", plan.plannedComponents.map { "\($0.name) (\($0.type.rawValue))" })
             if plan.iterationLimit > 0 { row("Iteration limit", ["\(plan.iterationLimit) attempts"]) }

@@ -21,7 +21,7 @@ final class AppModel {
 
     // Panel
     var isExpanded = false
-    var route: Route = .compose
+    var route: Route = .compose { didSet { if oldValue != route { onLayoutChange() } } }
 
     // Workspaces
     private(set) var workspaces: [Workspace] = []
@@ -33,12 +33,14 @@ final class AppModel {
     private(set) var analysis: AnalysisState = .idle
 
     // Prompting
-    var input = ""
+    var input = "" {
+        didSet { if oldValue.isEmpty != input.isEmpty { onLayoutChange() } }
+    }
     var mode: PromptMode = Preferences.mode { didSet { Preferences.mode = mode } }
     var customTechniques: Set<PromptTechnique> = Preferences.customTechniques { didSet { Preferences.customTechniques = customTechniques } }
     var plan: PromptPlan?
     private(set) var isOptimizing = false
-    var clarification: ClarificationState?
+    var clarification: ClarificationState? { didSet { onLayoutChange() } }
     private var clarificationResolutions: [String: ClarificationResolution] = [:]
     var agentID = Preferences.agentID { didSet { Preferences.agentID = agentID } }
 
@@ -51,6 +53,7 @@ final class AppModel {
     private(set) var analyzer: WorkspaceAnalyzer
     var onExpand: () -> Void = {}
     var onCollapse: () -> Void = {}
+    var onLayoutChange: () -> Void = {}
 
 
     init(store: WorkspaceStore) {

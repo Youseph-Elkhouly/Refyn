@@ -52,7 +52,6 @@ public enum PromptComposer {
                 "If a required detail is missing and the code does not resolve it, state the assumption before proceeding; do not turn an assumption into a requirement or acceptance criterion.",
             ])))
         }
-        if !plan.missingInformation.isEmpty { s.append(section("Open questions", bullets(plan.missingInformation.map { "\($0) — confirm in the code or ask before assuming." }))) }
         if t.contains(.verification) || t.contains(.multiStage) {
             let steps = plan.verificationInstructions.isEmpty ? ["Run the project's existing tests and build for the affected code."] : plan.verificationInstructions
             s.append(section(t.contains(.multiStage) ? "Stage 3 — Verify" : "Verification", bullets(steps)))

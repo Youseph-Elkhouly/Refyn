@@ -117,7 +117,7 @@ final class LocalInferenceTests: XCTestCase {
         XCTAssertNotEqual(plan.optimizedPrompt.trimmingCharacters(in: .whitespacesAndNewlines), prompt)
         XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("7 days"))
         XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("workspace admins"))
-        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("compatibility"))
+        XCTAssertFalse(plan.optimizedPrompt.localizedCaseInsensitiveContains("open questions"))
         XCTAssertFalse(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("UI elements") },
                        "An unanswered scope question must not be turned into an acceptance criterion.")
     }

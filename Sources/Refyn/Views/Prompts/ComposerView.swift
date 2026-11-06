@@ -37,6 +37,7 @@ struct ComposerView: View {
             REditor(text: $model.input, placeholder: "What are you working on?", inset: 14, focus: $focused)
                 .padding(.horizontal, 6)
                 .accessibilityLabel("Prompt")
+                .help("Type your request here. Use ⌘C to copy and ⌘V to paste selected text.")
             if model.voice.state == .recording || model.voice.state == .transcribing {
                 HStack(spacing: Theme.Space.sm) {
                     if model.voice.state == .recording { Waveform(levels: model.voice.levels); Text("Listening…") }

@@ -32,6 +32,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.delegate = self
+        model.onLayoutChange = { [weak self] in self?.layout(animated: true) }
         let root = NotchRootView(model: model, geometry: { [weak self] in self?.geometry ?? .fallback })
         let host = NSHostingView(rootView: root)
         host.sizingOptions = []
@@ -64,7 +65,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         let g = geometry
         let size: NSSize
         if model.isExpanded {
-            size = NSSize(width: Self.expandedSize.width, height: Self.expandedSize.height + (g.hasNotch ? g.notchHeight : 0))
+            let contentHeight: CGFloat
+            if model.route == .compose {
+                if model.clarification != nil { contentHeight = 400 }
+                else if model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { contentHeight = 300 }
+                else { contentHeight = 380 }
+            } else {
+                contentHeight = Self.expandedSize.height
+            }
+            size = NSSize(width: Self.expandedSize.width, height: contentHeight + (g.hasNotch ? g.notchHeight : 0))
         } else if g.hasNotch {
             let extra: CGFloat = model.voice.isBusy ? 150 : 96
             size = NSSize(width: g.notchWidth + extra, height: g.notchHeight)
