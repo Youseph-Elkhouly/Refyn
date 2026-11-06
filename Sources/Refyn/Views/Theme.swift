@@ -43,6 +43,7 @@ enum Theme {
     enum Motion {
         static let fast = 0.12
         static let base = 0.2
+        static let panel = 0.16
         static let slow = 0.28
     }
 }

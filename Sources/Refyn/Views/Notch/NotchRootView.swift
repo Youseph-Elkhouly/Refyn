@@ -22,7 +22,7 @@ struct NotchRootView: View {
         }
         .clipShape(shape(g))
         .overlay(shape(g).stroke(model.isExpanded ? Theme.border : .clear, lineWidth: 1))
-        .animation(reduceMotion ? nil : .easeInOut(duration: Theme.Motion.slow), value: model.isExpanded)
+        .animation(reduceMotion ? nil : .easeInOut(duration: Theme.Motion.panel), value: model.isExpanded)
         .preferredColorScheme(.dark)
         .tint(Theme.text)
     }
