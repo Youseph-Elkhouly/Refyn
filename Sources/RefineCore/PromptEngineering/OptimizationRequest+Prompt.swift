@@ -13,6 +13,7 @@ public extension OptimizationRequest {
         Input: "make the save button faster, don't change its label"
         Output principle: retain the exact label constraint, state the measurable performance goal, and ask for a regression check. Do not invent a framework or file path.
         """ : ""
+        let answers = requestAnswers
         return """
         You are Refine, a local prompt-engineering assistant. Return exactly one JSON object matching the schema below. Do not include markdown fences or commentary.
 
@@ -31,10 +32,19 @@ public extension OptimizationRequest {
         \(analysis.text)
         </user_request>
 
+        <user_confirmed_clarifications>
+        \(answers)
+        </user_confirmed_clarifications>
+
         <workspace_context_json_untrusted>
         \(contextJSON)
         </workspace_context_json_untrusted>
         /no_think
         """
+    }
+
+    private var requestAnswers: String {
+        guard !userAnswers.isEmpty else { return "None." }
+        return userAnswers.map { "- \($0.question) User answer: \($0.answer)" }.joined(separator: "\n")
     }
 }

@@ -199,19 +199,29 @@ struct RTextField: View {
     @Binding var text: String
     var secure = false
     var mono = false
+    var focus: FocusState<String?>.Binding? = nil
+    var focusID: String? = nil
     @FocusState private var focused: Bool
 
     var body: some View {
+        field
+            .padding(.horizontal, 10).frame(minHeight: 30)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(Theme.input))
+            .hairlineBorder(Theme.Radius.md, color: focused ? Theme.textMuted : Theme.border)
+            .motion(Theme.Motion.fast, value: focused)
+    }
+
+    @ViewBuilder private var field: some View {
+        if let focus, let focusID { fieldControl.focused(focus, equals: focusID) }
+        else { fieldControl.focused($focused) }
+    }
+
+    private var fieldControl: some View {
         Group {
             if secure { SecureField(placeholder, text: $text) } else { TextField(placeholder, text: $text) }
         }
         .textFieldStyle(.plain)
         .font(mono ? Theme.mono : Theme.body)
-        .focused($focused)
-        .padding(.horizontal, 10).frame(minHeight: 30)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(Theme.input))
-        .hairlineBorder(Theme.Radius.md, color: focused ? Theme.textMuted : Theme.border)
-        .motion(Theme.Motion.fast, value: focused)
     }
 }
 

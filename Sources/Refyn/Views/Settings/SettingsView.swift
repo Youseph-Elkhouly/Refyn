@@ -53,6 +53,7 @@ private struct SettingsSection<Content: View>: View {
 struct ModelSettings: View {
     let model: AppModel
     @State private var iterations = Preferences.iterationLimit
+    @State private var askForMissingInformation = Preferences.askForMissingInformation
     @State private var managementError: String?
 
     var body: some View {
@@ -99,12 +100,16 @@ struct ModelSettings: View {
                     Text(managementError).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
                 }
             }
-            SettingsSection(title: "Prompts", footnote: "The local model may use a bounded verification loop in the instructions it generates.") {
+            SettingsSection(title: "Prompts", footnote: "Refyn asks for missing task details before local optimization. You can skip questions and generate with open questions instead.") {
+                SettingsRow(title: "Ask for missing information", detail: "Clarify vague requests before generation.") {
+                    RToggle(title: "Ask before optimizing", isOn: $askForMissingInformation)
+                }
                 SettingsRow(title: "Fix-loop attempts", detail: "How many times an agent may retry before stopping.", divider: false) {
                     Stepper("\(iterations)", value: $iterations, in: 1...10).onChange(of: iterations) { Preferences.iterationLimit = iterations }
                 }
             }
         }
+        .onChange(of: askForMissingInformation) { Preferences.askForMissingInformation = askForMissingInformation }
     }
 }
 

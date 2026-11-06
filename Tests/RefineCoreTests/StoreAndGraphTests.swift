@@ -53,6 +53,22 @@ final class StoreAndGraphTests: XCTestCase {
         XCTAssertTrue(afterDelete.isEmpty)
     }
 
+    func testClarificationAnswerNoteIsVisibleAndIncludedInContext() async throws {
+        let ws = try await store.addDirectory(dir)
+        let answerText = "Uses PostgreSQL for persistence."
+        let note = Note(workspaceID: ws.id, title: "Prompt clarifications · feature", body: "### Which database?\n\n\(answerText)", includeInContext: true)
+        try await store.save(note)
+        let visible = try await store.notes(workspaceID: ws.id)
+        XCTAssertEqual(visible.first?.id, note.id)
+        XCTAssertTrue(visible.first?.includeInContext == true)
+        let context = ContextRetriever.retrieve(for: RequestAnalysis("add search", confirmedRequirements: [answerText]), workspaceName: ws.name,
+                                               graph: nil, notes: visible)
+        XCTAssertTrue(context.notes.joined().contains(answerText))
+        try await store.deleteNote(note.id)
+        let afterDelete = try await store.notes(workspaceID: ws.id)
+        XCTAssertFalse(afterDelete.contains { $0.id == note.id })
+    }
+
     func testPlansPersistAndServeAsCache() async throws {
         let ws = try await store.addDirectory(dir)
         var plan = try await PromptOptimizer(provider: nil).optimize(.init(text: "Fix the parser", mode: .basic, workspace: ws))

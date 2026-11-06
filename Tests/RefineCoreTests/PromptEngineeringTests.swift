@@ -59,11 +59,34 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertTrue(analysis.gaps.isEmpty)
     }
 
+    func testShortFeatureStillAsksForRequirements() {
+        let analysis = RequestAnalysis("Add team invitations to workspace settings")
+        XCTAssertEqual(analysis.taskType, .feature)
+        XCTAssertFalse(analysis.gaps.isEmpty)
+    }
+
     func testWorkspaceFrameworkCanCoverPlatformChecklistItem() {
         let analysis = RequestAnalysis("improve the settings screen")
         let context = RetrievedContext(workspaceName: "Sample", languages: ["Swift"], frameworks: ["SwiftUI"], components: [], notes: [], analyzed: true)
         XCTAssertFalse(analysis.gaps(context: context).contains { $0.id == "ui.platform" })
         XCTAssertTrue(analysis.gaps.contains { $0.id == "ui.platform" })
+    }
+
+    func testClarificationAnswersRemainUserConfirmedAndSkippedQuestionsStayOpen() async throws {
+        let answer = PromptAnswer(id: "bug.reproduction", question: "What reproduces it?", answer: "Submitting a valid email with an expired password.")
+        let openQuestion = "What did you expect, and what happened instead?"
+        let optimizer = PromptOptimizer(provider: nil)
+        let plan = try await optimizer.optimize(.init(text: "fix the login bug", mode: .advanced, userAnswers: [answer], unansweredQuestions: [openQuestion]))
+        XCTAssertTrue(plan.confirmedRequirements.contains { $0.contains(answer.answer) })
+        XCTAssertTrue(plan.missingInformation.contains(openQuestion))
+        XCTAssertTrue(plan.optimizedPrompt.contains(openQuestion))
+
+        let analysis = RequestAnalysis("fix the login bug", confirmedRequirements: ["What reproduces it? \(answer.answer)"])
+        let request = OptimizationRequest(analysis: analysis, mode: .advanced, techniques: [.structured],
+                                          context: RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false),
+                                          iterationLimit: 0, userAnswers: [answer])
+        XCTAssertTrue(request.modelPrompt.contains("<user_confirmed_clarifications>"))
+        XCTAssertTrue(request.modelPrompt.contains(answer.answer))
     }
 
     func testAutoKeepsSimpleRequestSimple() async throws {

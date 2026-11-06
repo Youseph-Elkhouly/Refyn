@@ -45,7 +45,7 @@ public enum ContextRetriever {
 
     /// Ranks graph components by overlap with the request's words and identifiers.
     public static func retrieve(for analysis: RequestAnalysis, workspaceName: String, graph: CodebaseGraph?, notes: [Note]) -> RetrievedContext {
-        let words = tokens(analysis.text)
+        let words = tokens(analysis.searchText)
         var scored: [(GraphNode, Int)] = []
         for node in graph?.nodes ?? [] where node.type != .test || analysis.taskType == .test {
             var score = 0
@@ -53,7 +53,7 @@ public enum ContextRetriever {
             score += words.intersection(haystack).count * 3
             for term in analysis.keyTerms where node.files.contains(where: { $0.localizedCaseInsensitiveContains(term) }) || node.symbols.contains(where: { $0.name == term }) { score += 5 }
             if analysis.taskType == .ui && node.type == .frontend { score += 1 }
-            if analysis.text.localizedCaseInsensitiveContains("api") && node.type == .api { score += 1 }
+            if analysis.searchText.localizedCaseInsensitiveContains("api") && node.type == .api { score += 1 }
             if ["database", "db", "schema", "model", "table", "migration"].contains(where: words.contains) && node.type == .database { score += 2 }
             if score > 0 { scored.append((node, score)) }
         }

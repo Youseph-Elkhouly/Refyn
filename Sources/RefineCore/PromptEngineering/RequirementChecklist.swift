@@ -11,6 +11,14 @@ public struct RequirementGap: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// An answer explicitly provided by the user to a checklist question.
+public struct PromptAnswer: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var question: String
+    public var answer: String
+    public init(id: String, question: String, answer: String) { self.id = id; self.question = question; self.answer = answer }
+}
+
 /// Deterministic checklist for catching missing requirements before a model is called.
 public enum RequirementChecklist {
     private enum Detector: Sendable {
@@ -34,9 +42,13 @@ public enum RequirementChecklist {
     /// Top three unanswered items, ordered by task relevance. Easy renames and similar short
     /// non-risky edits deliberately bypass clarification to keep Auto/Basic immediate.
     public static func gaps(for analysis: RequestAnalysis, context: RetrievedContext? = nil) -> [RequirementGap] {
-        if analysis.complexity < 2, [.feature, .refactor, .docs, .config, .other].contains(analysis.taskType) { return [] }
+        if isSimpleRename(analysis.text) || (analysis.complexity < 2 && analysis.taskType == .other) { return [] }
         return Array(items(for: analysis.taskType).filter { !covered($0.detector, request: analysis.text, context: context) }
             .prefix(3).map { RequirementGap(id: $0.id, taskType: analysis.taskType, question: $0.question) })
+    }
+
+    private static func isSimpleRename(_ text: String) -> Bool {
+        text.range(of: #"^\s*(rename|change|replace)\b.{1,70}\bto\b.{1,50}$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func items(for type: TaskType) -> [Item] {

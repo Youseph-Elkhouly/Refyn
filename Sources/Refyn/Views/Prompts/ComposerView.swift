@@ -4,25 +4,32 @@ import SwiftUI
 struct ComposerView: View {
     @Bindable var model: AppModel
     @FocusState private var focused: Bool
+    @FocusState private var focusedAnswer: String?
     @State private var showTechniques = false
 
     private var canOptimize: Bool { !model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
-            editor
-            Hairline()
-            controls
-            footer
+            if let clarification = model.clarification {
+                clarificationView(clarification)
+            } else {
+                editor
+                Hairline()
+                controls
+                footer
+            }
         }
         .task { await focusEditor() }
+        .onExitCommand { model.cancelClarification() }
     }
 
     /// The panel becomes key a moment after the view appears, so retry once.
     func focusEditor() async {
+        guard model.clarification == nil else { return }
         focused = true
         try? await Task.sleep(for: .milliseconds(120))
-        focused = true
+        if model.clarification == nil { focused = true }
     }
 
     var editor: some View {
@@ -44,6 +51,43 @@ struct ComposerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .motion(Theme.Motion.base, value: model.voice.state)
+    }
+
+    func clarificationView(_ state: AppModel.ClarificationState) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader(title: "Needs your input")
+                Spacer()
+                Text("\(state.gaps.count) questions").font(Theme.caption).foregroundStyle(Theme.textMuted)
+            }
+            Text(state.requestText).font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+
+            ForEach(state.gaps) { gap in
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    FieldLabel(gap.question)
+                    RTextField(placeholder: "Your answer (optional)",
+                               text: Binding(get: { model.clarification?.answers[gap.id] ?? "" },
+                                             set: { model.setClarificationAnswer($0, for: gap.id) }),
+                               focus: $focusedAnswer, focusID: gap.id)
+                }
+            }
+
+            HStack(spacing: Theme.Space.sm) {
+                RButton(title: "Back", kind: .ghost) { model.cancelClarification() }
+                    .keyboardShortcut(.escape, modifiers: [])
+                RButton(title: "Skip and generate", kind: .secondary) { Task { await model.skipClarification() } }
+                Spacer()
+                RButton(title: "Continue", symbol: "arrow.right", kind: .primary) { Task { await model.continueClarification() } }
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
+            Text("Answers are saved as a deletable workspace note when a workspace is selected.")
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+        }
+        .padding(Theme.Space.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { focusedAnswer = state.gaps.first?.id }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Clarification questions")
     }
 
     var controls: some View {

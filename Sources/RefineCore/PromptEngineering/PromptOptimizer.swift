@@ -19,10 +19,12 @@ public struct PromptOptimizer: Sendable {
         public var graph: CodebaseGraph?
         public var notes: [Note]
         public var iterationLimit: Int
+        public var userAnswers: [PromptAnswer]
+        public var unansweredQuestions: [String]
         public init(text: String, mode: PromptMode, customTechniques: Set<PromptTechnique> = [], workspace: Workspace? = nil, graph: CodebaseGraph? = nil,
-                    notes: [Note] = [], iterationLimit: Int = 3) {
+                    notes: [Note] = [], iterationLimit: Int = 3, userAnswers: [PromptAnswer] = [], unansweredQuestions: [String] = []) {
             self.text = text; self.mode = mode; self.customTechniques = customTechniques; self.workspace = workspace; self.graph = graph
-            self.notes = notes; self.iterationLimit = iterationLimit
+            self.notes = notes; self.iterationLimit = iterationLimit; self.userAnswers = userAnswers; self.unansweredQuestions = unansweredQuestions
         }
     }
 
@@ -33,16 +35,17 @@ public struct PromptOptimizer: Sendable {
     public init(provider: (any LLMProvider)?) { self.provider = provider }
 
     public func cacheKey(for input: Input) -> String {
-        let analysis = RequestAnalysis(input.text)
+        let analysis = RequestAnalysis(input.text, confirmedRequirements: input.userAnswers.map { "\($0.question) \($0.answer)" })
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         let parts = [analysis.text, input.mode.rawValue, input.customTechniques.map(\.rawValue).sorted().joined(separator: ","), context.hash,
-                     String(input.iterationLimit), provider?.identifier ?? "local", "v1"]
+                     input.userAnswers.map { "\($0.id):\($0.answer)" }.joined(separator: "\n"), input.unansweredQuestions.joined(separator: "\n"),
+                     String(input.iterationLimit), provider?.identifier ?? "local", "v2"]
         return SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     public func optimize(_ input: Input) async throws -> PromptPlan {
         // 1–2: intent and task type.
-        let analysis = RequestAnalysis(input.text)
+        let analysis = RequestAnalysis(input.text, confirmedRequirements: input.userAnswers.map { "\($0.question) \($0.answer)" })
         guard !analysis.text.isEmpty else { throw PromptError.emptyInput }
         // 3: context, bounded and never whole files.
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
@@ -57,7 +60,7 @@ public struct PromptOptimizer: Sendable {
         let directRewrite = techniques.contains(.zeroShot) && techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
         if let provider {
             if !directRewrite {
-                let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit))
+                let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit, userAnswers: input.userAnswers))
                 do {
                     let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
                     modelPlan = valid
@@ -78,6 +81,7 @@ public struct PromptOptimizer: Sendable {
         plan.iterationLimit = iterationLimit
         plan.provider = providerID
         plan.cacheKey = cacheKey(for: input)
+        plan.missingInformation = Self.dedupe(plan.missingInformation + input.unansweredQuestions)
 
         // 8: construction.
         let modelRole = modelPlan?.role.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -121,7 +125,7 @@ public struct PromptOptimizer: Sendable {
             constraints: nonRedundant(dedupe(analysis.constraints + m.constraints), against: confirmed),
             successCriteria: m.successCriteria,
             missingInformation: m.missingInformation,
-            confirmedRequirements: m.confirmedRequirements,
+            confirmedRequirements: dedupe(analysis.confirmedRequirements + m.confirmedRequirements),
             suggestedDecisions: nonRedundant(m.suggestedDecisions, against: confirmed + taskText),
             plannedComponents: (m.plannedComponents ?? []).enumerated().map { i, p in
                 PlannedComponent(id: "p\(i + 1)", name: p.name, type: ComponentType(rawValue: p.type) ?? .library, connectsTo: p.connectsTo.filter(componentIDs.contains))
@@ -151,7 +155,7 @@ public struct PromptOptimizer: Sendable {
     static func localPlan(analysis: RequestAnalysis, context: RetrievedContext) -> PromptPlan {
         if analysis.complexity < 2 {
             return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType,
-                              constraints: analysis.constraints, confirmedRequirements: [analysis.intent])
+                              constraints: analysis.constraints, confirmedRequirements: dedupe(analysis.confirmedRequirements + [analysis.intent]))
         }
         let refs = context.components.prefix(5).map { CodeReference(path: $0.path, symbol: nil, reason: "\($0.type) module matching the request", source: .graph) }
         let tasks: [PlanTask]
@@ -179,7 +183,7 @@ public struct PromptOptimizer: Sendable {
         default: ["The requested behavior works as described.", "Existing tests and the build pass."]
         }
         return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType, codeReferences: refs, tasks: tasks,
-                          constraints: analysis.constraints, successCriteria: criteria, confirmedRequirements: [analysis.intent],
+                          constraints: analysis.constraints, successCriteria: criteria, confirmedRequirements: dedupe(analysis.confirmedRequirements + [analysis.intent]),
                           verificationInstructions: ["Run the existing tests for the affected code.", "Run the build or type checker."])
     }
 

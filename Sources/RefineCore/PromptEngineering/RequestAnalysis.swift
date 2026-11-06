@@ -11,14 +11,18 @@ public struct RequestAnalysis: Sendable, Hashable {
     public var complexity: Int
     public var mentionsTests: Bool
     public var hasConditions: Bool
+    /// Requirements explicitly confirmed by the user in clarification answers.
+    public var confirmedRequirements: [String]
+    public var searchText: String { ([text] + confirmedRequirements).joined(separator: "\n") }
     /// Most important unanswered task-specific details. Always available without an LLM.
     public var gaps: [RequirementGap] { RequirementChecklist.gaps(for: self) }
 
     public func gaps(context: RetrievedContext?) -> [RequirementGap] { RequirementChecklist.gaps(for: self, context: context) }
 
-    public init(_ raw: String) {
+    public init(_ raw: String, confirmedRequirements: [String] = []) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         self.text = text
+        self.confirmedRequirements = confirmedRequirements.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let sentences = Self.sentences(text)
         intent = sentences.first.map { Self.stripFiller($0) } ?? text
         taskType = Self.classify(text)
@@ -26,7 +30,7 @@ public struct RequestAnalysis: Sendable, Hashable {
         // Keep the extracted constraint list focused; the full request is preserved separately.
         constraints = Array(Set(sentences.filter(Self.isConstraint).map { Self.stripFiller($0) }
             .filter { !$0.isEmpty && $0.count <= 120 })).sorted()
-        keyTerms = Self.keyTerms(text)
+        keyTerms = Self.keyTerms(([text] + self.confirmedRequirements).joined(separator: "\n"))
         let lower = text.lowercased()
         mentionsTests = ["test", "spec", "coverage", "ci"].contains { lower.contains($0) }
         hasConditions = [" if ", " unless ", " when ", " otherwise ", "in case"].contains { " \(lower) ".contains($0) }

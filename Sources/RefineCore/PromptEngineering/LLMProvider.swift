@@ -147,8 +147,9 @@ public struct OptimizationRequest: Sendable, Hashable {
     public var techniques: [PromptTechnique]
     public var context: RetrievedContext
     public var iterationLimit: Int
-    public init(analysis: RequestAnalysis, mode: PromptMode, techniques: [PromptTechnique], context: RetrievedContext, iterationLimit: Int) {
-        self.analysis = analysis; self.mode = mode; self.techniques = techniques; self.context = context; self.iterationLimit = iterationLimit
+    public var userAnswers: [PromptAnswer]
+    public init(analysis: RequestAnalysis, mode: PromptMode, techniques: [PromptTechnique], context: RetrievedContext, iterationLimit: Int, userAnswers: [PromptAnswer] = []) {
+        self.analysis = analysis; self.mode = mode; self.techniques = techniques; self.context = context; self.iterationLimit = iterationLimit; self.userAnswers = userAnswers
     }
 }
 
