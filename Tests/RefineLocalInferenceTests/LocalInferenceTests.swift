@@ -261,6 +261,74 @@ final class LocalInferenceTests: XCTestCase {
         }
     }
 
+    /// Samples used for latency and quality comparisons, grouped by how heavy the request is.
+    static let benchmarkSamples: [(tier: String, text: String, mode: PromptMode, retain: [String])] = [
+        ("simple", "Rename Save to Continue", .auto, ["Continue"]),
+        ("simple", "add a tooltip to the export button", .auto, ["tooltip", "export"]),
+        ("simple", "the animation for opening the notch is bad", .auto, ["notch"]),
+        ("moderate", "saving a profile sometimes loses the avatar", .auto, ["avatar"]),
+        ("moderate", "add dark mode", .basic, ["dark mode"]),
+        ("moderate", "make search faster but don't change the result order or the public API", .auto, ["result order", "public API"]),
+        ("complex", "image uploads sometimes fail on timeout. add retry but don't retry 4xx responses. keep the current progress UI, max 2 retries, and test timeout, offline, and permanent failure cases. don’t change upload API", .advanced, ["4xx", "progress UI", "2 retries", "offline", "upload API"]),
+        ("complex", "let workspace admins invite people by email, invites expire after 7 days, add resend and revoke, keep the current settings page layout, and add tests for expiry and duplicate members", .advanced, ["7 days", "resend", "revoke", "settings page layout", "duplicate"]),
+    ]
+
+    private static func peakMemoryMB() -> Int {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Int(usage.ru_maxrss) / 1_048_576
+    }
+
+    /// Runs the benchmark samples through the router and prints latency, token counts, tier and fallback frequency.
+    @MainActor
+    private func runBenchmark(label: String, withFastModel: Bool, showOutput: Bool = false) async throws {
+        let manager = LocalModelManager()
+        let loadStart = ContinuousClock.now
+        await manager.install()
+        guard manager.state == .ready else { throw LLMError.unavailable(manager.state.title) }
+        var fast: LocalModelManager?
+        if withFastModel {
+            let f = LocalModelManager(modelID: LocalModelManager.fastModelID)
+            await f.install()
+            guard f.state == .ready else { throw LLMError.unavailable(f.state.title) }
+            fast = f
+        }
+        print("BENCH \(label) load: \(Duration.seconds(from: loadStart.duration(to: .now)))s peakMemory=\(Self.peakMemoryMB())MB")
+        let optimizer = PromptOptimizer(provider: LocalLLMProvider(manager: manager, fastManager: fast))
+        var fallbacks = 0, lostTerms = 0
+        var totals: [String: Double] = [:]
+        for sample in Self.benchmarkSamples {
+            let clock = ContinuousClock()
+            let start = clock.now
+            let plan = try await optimizer.optimize(.init(text: sample.text, mode: sample.mode, iterationLimit: 2))
+            let elapsed = Duration.seconds(from: start.duration(to: clock.now))
+            let usedModel = plan.provider != "local"
+            let m = usedModel ? [manager.lastMetrics, fast?.lastMetrics].compactMap { $0 }.max { $0.sequence < $1.sequence } : nil
+            let lost = sample.retain.filter { !plan.optimizedPrompt.localizedCaseInsensitiveContains($0) }
+            if !plan.notices.isEmpty { fallbacks += 1 }
+            lostTerms += lost.count
+            totals[sample.tier, default: 0] += elapsed
+            print(String(format: "BENCH %@ [%@] %.2fs prompt=%d out=%d ttft=%.2fs tps=%.1f path=%@ notices=%d lost=%@ tasks=%d chars=%d",
+                         label, sample.tier, elapsed, m?.promptTokens ?? 0, m?.outputTokens ?? 0, m?.timeToFirstToken ?? 0, m?.tokensPerSecond ?? 0,
+                         usedModel ? "model" : "local", plan.notices.count, lost.joined(separator: "|"), plan.tasks.count, plan.optimizedPrompt.count))
+            if !plan.notices.isEmpty { print("BENCHNOTICE \(plan.notices.joined(separator: " | ").prefix(700))") }
+            if showOutput { print("BENCHOUT [\(sample.tier)] \(sample.text)\n\(plan.optimizedPrompt)\n") }
+        }
+        print("BENCH \(label) summary: noticesOrFallbacks=\(fallbacks) lostTerms=\(lostTerms) totals=\(totals) peakMemory=\(Self.peakMemoryMB())MB")
+    }
+
+    @MainActor
+    func testBenchmarkRouted4BOnly() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else { throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1") }
+        try await runBenchmark(label: "routed-4B", withFastModel: false, showOutput: ProcessInfo.processInfo.environment["BENCH_SHOW_OUTPUT"] == "1")
+    }
+
+    @MainActor
+    func testBenchmarkRoutedWithFastModel() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else { throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1") }
+        try await runBenchmark(label: "routed-4B+1.7B", withFastModel: true, showOutput: ProcessInfo.processInfo.environment["BENCH_SHOW_OUTPUT"] == "1")
+    }
+
     /// Baseline set for intent, constraints, hallucination checks, concise output, and useful workflows.
     @MainActor
     func testPromptEngineeringBaselineEvaluation() async throws {

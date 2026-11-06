@@ -10,6 +10,27 @@ import RefineCore
 final class LocalModelManager {
     nonisolated static let modelID = "mlx-community/Qwen3-4B-4bit"
     nonisolated static let modelLabel = "Qwen3 4B · 4-bit"
+    nonisolated static let fastModelID = "mlx-community/Qwen3-1.7B-4bit"
+
+    /// What one generation cost. Token counts come from the tokenizer and the stream; times are wall clock.
+    struct Metrics: Sendable {
+        var promptTokens = 0
+        var outputTokens = 0
+        var timeToFirstToken: Double = 0
+        var total: Double = 0
+        /// Time spent loading the model for this request (0 when it was already in memory).
+        var loadTime: Double = 0
+        /// Increases with every generation across all managers, so the most recent can be told apart.
+        var sequence = 0
+        var tokensPerSecond: Double { total > timeToFirstToken ? Double(outputTokens) / (total - timeToFirstToken) : 0 }
+    }
+
+    let modelID: String
+
+    init(modelID: String = LocalModelManager.modelID) { self.modelID = modelID }
+
+    private(set) var lastMetrics: Metrics?
+    private static var generationCounter = 0
 
     enum State: Equatable {
         case notInstalled
@@ -34,14 +55,14 @@ final class LocalModelManager {
     private var container: ModelContainer?
     private var operationTask: Task<Void, Never>?
     private var loadTask: Task<ModelContainer, Error>?
-    private var generationTask: Task<String, Error>?
+    private var generationTask: Task<(String, Metrics), Error>?
 
     private var modelCacheBase: URL {
         AppPaths.supportDirectory.appending(path: "Models", directoryHint: .isDirectory)
     }
 
     private var modelRepository: URL {
-        modelCacheBase.appending(path: "models/\(Self.modelID)", directoryHint: .isDirectory)
+        modelCacheBase.appending(path: "models/\(modelID)", directoryHint: .isDirectory)
     }
 
     var isInstalled: Bool {
@@ -64,7 +85,7 @@ final class LocalModelManager {
                 let hub = HubApi(downloadBase: self.modelCacheBase, useOfflineMode: self.isInstalled)
                 let loaded = try await LLMModelFactory.shared.loadContainer(
                     hub: hub,
-                    configuration: ModelConfiguration(id: Self.modelID)
+                    configuration: ModelConfiguration(id: modelID)
                 ) { progress in
                     let fraction = min(1, max(0, progress.fractionCompleted.isFinite ? progress.fractionCompleted : 0))
                     Task { @MainActor [weak self] in
@@ -105,17 +126,20 @@ final class LocalModelManager {
         if let loadTask { container = try await loadTask.value; return }
         let hub = HubApi(downloadBase: modelCacheBase, useOfflineMode: true)
         let task = Task<ModelContainer, Error> {
-            try await LLMModelFactory.shared.loadContainer(hub: hub, configuration: ModelConfiguration(id: Self.modelID))
+            try await LLMModelFactory.shared.loadContainer(hub: hub, configuration: ModelConfiguration(id: modelID))
         }
         loadTask = task
         defer { loadTask = nil }
         container = try await task.value
     }
 
-    func generate(_ prompt: String) async throws -> String {
+    func generate(_ prompt: String, maxTokens: Int = 1600) async throws -> String {
+        var loadTime = 0.0
         if container == nil, isInstalled {
             do {
+                let started = ContinuousClock.now
                 try await ensureLoaded()
+                loadTime = Self.seconds(started.duration(to: .now))
             } catch {
                 let message = "Saved model could not be loaded offline. Verify this Mac has enough unified memory (allow about 8 GB free) and download the model again. \(error.localizedDescription)"
                 state = .failed(message)
@@ -126,29 +150,44 @@ final class LocalModelManager {
         state = .generating
         defer { state = .ready }
         do {
-            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 1600, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
-            let task = Task<String, Error> {
+            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: maxTokens, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
+            let promptTokens = await container.perform { $0.tokenizer.encode(text: prompt).count }
+            let task = Task<(String, Metrics), Error> {
                 var result = ""
                 var detector = JSONObjectEndDetector()
+                var metrics = Metrics(promptTokens: promptTokens, loadTime: loadTime)
+                let started = ContinuousClock.now
                 for try await chunk in session.streamResponse(to: prompt) {
                     try Task.checkCancellation()
+                    if metrics.outputTokens == 0 { metrics.timeToFirstToken = Self.seconds(started.duration(to: .now)) }
+                    metrics.outputTokens += 1
                     result += chunk
                     if detector.feed(chunk) { break }
                 }
-                return result
+                metrics.total = Self.seconds(started.duration(to: .now))
+                return (result, metrics)
             }
             generationTask = task
             defer { generationTask = nil }
-            return try await withTaskCancellationHandler {
+            let (text, metrics) = try await withTaskCancellationHandler {
                 try await task.value
             } onCancel: {
                 task.cancel()
             }
+            Self.generationCounter += 1
+            var recorded = metrics
+            recorded.sequence = Self.generationCounter
+            lastMetrics = recorded
+            return text
         } catch is CancellationError {
             throw LLMError.cancelled
         } catch {
             throw LLMError.unavailable(error.localizedDescription)
         }
+    }
+
+    nonisolated static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     func unload() {
@@ -169,10 +208,14 @@ final class LocalModelManager {
 
 struct LocalLLMProvider: LLMProvider, @unchecked Sendable {
     let manager: LocalModelManager
+    /// Optional small model for moderate requests. Used only when it is installed; otherwise the main model runs them.
+    var fastManager: LocalModelManager?
     var identifier: String { LocalModelManager.modelID }
 
     func plan(for request: OptimizationRequest) async throws -> ModelPlan {
-        let output = try await manager.generate(request.modelPrompt)
+        var target = manager
+        if request.tier == .moderate, let fastManager, await fastManager.isInstalled { target = fastManager }
+        let output = try await target.generate(request.modelPrompt, maxTokens: request.tier.outputTokenBudget)
         guard let json = ModelOutput.jsonObject(from: output) else {
             throw LLMError.invalidResponse("No JSON object was returned.")
         }

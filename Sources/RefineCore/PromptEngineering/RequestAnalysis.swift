@@ -70,7 +70,7 @@ public struct RequestAnalysis: Sendable, Hashable {
         let opening = l.split(whereSeparator: \.isWhitespace).prefix(4).joined(separator: " ")
         if ["write tests", "add tests", "unit test", "test coverage", "integration test", "increase coverage"].contains(where: opening.contains) { return .test }
         let rules: [(TaskType, [String])] = [
-            (.bugfix, ["fix", "bug", "broken", "crash", "error", "fails", "failing", "regression", "doesn't work", "not working", "issue"]),
+            (.bugfix, ["fix", "bug", "broken", "crash", "error", "fails", "failing", "regression", "doesn't work", "not working", "issue", "loses", "losing", "disappear", "stuck", "won't", "can't"]),
             (.performance, ["slow", "performance", "optimize", "speed up", "speed", "latency", "memory usage", "faster"]),
             (.refactor, ["refactor", "clean up", "cleanup", "restructure", "rename", "extract", "simplify", "reorganize", "migrate"]),
             (.ui, ["ui", "button", "layout", "css", "style", "screen", "view", "modal", "design", "animation", "dark mode"]),

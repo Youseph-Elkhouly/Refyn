@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         observeVoice()
         Task { await model.load() }
         Task { await model.localModel.warmUp() }
+        Task { await model.fastModel.warmUp() }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

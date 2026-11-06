@@ -67,30 +67,43 @@ public struct PromptOptimizer: Sendable {
         // do not bypass the model and return the original sentence as a "Local rules" result.
         let guidance = Playbook.match(analysis, context: context)
         let needsEngineering = guidance != nil || !pendingGaps.isEmpty || !input.userAnswers.isEmpty || !unansweredQuestions.isEmpty
-        // With a model available, even a simple request is worth improving. A bare zero-shot rewrite would hand
-        // back the user's own sentence, so use the structured sections instead (the composer drops empty ones).
+        // Route by complexity before spending any compute: small requests are improved instantly by local rules,
+        // moderate ones get one compact model call, complex ones the full instructions.
+        let tier = OptimizationRouter.tier(analysis: analysis, mode: input.mode, pendingGaps: unansweredQuestions.count, hasLocalCoverage: QuickRecipes.recipe(for: analysis) != nil || guidance != nil,
+                                           hasAnswers: !input.userAnswers.isEmpty, hasContext: !context.isEmpty)
+        let quick = input.mode != .custom && tier == .simple
         let originalTechniques = techniques
         let lightweight = techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
-        if input.mode != .custom && lightweight && (needsEngineering || provider != nil) {
+        if quick {
+            techniques = PromptTechnique.allCases.filter { [.structured, .constraints, .decomposition, .acceptanceCriteria, .verification].contains($0)
+                || ($0 == .outputFormat && guidance != nil) || ($0 == .contextInjection && !context.isEmpty) }
+        } else if input.mode != .custom && lightweight && (needsEngineering || provider != nil) {
             techniques = PromptTechnique.allCases.filter { [.structured, .constraints, .acceptanceCriteria].contains($0) || ($0 == .outputFormat && guidance != nil) || ($0 == .contextInjection && !context.isEmpty) }
         }
-        let directRewrite = provider == nil || (input.mode == .custom && !needsEngineering && techniques.contains(.zeroShot) && lightweight)
+        let requestTier: OptimizationTier = input.mode == .custom ? .complex : tier
+        let directRewrite = provider == nil || quick || (input.mode == .custom && !needsEngineering && techniques.contains(.zeroShot) && lightweight)
         if let provider {
             if !directRewrite {
                 let request = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
                                                  iterationLimit: iterationLimit, userAnswers: input.userAnswers,
-                                                 unansweredQuestions: unansweredQuestions)
+                                                 unansweredQuestions: unansweredQuestions, tier: requestTier)
                 do {
                     let raw = try await provider.plan(for: request)
                     let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
                     let first = InventionGuard.apply(to: valid, analysis: analysis, context: context, allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
-                    if first.hasViolations || !dropped.isEmpty {
+                    if requestTier != .complex {
+                        // Retrying costs a second generation. The guard already repaired the plan, so report instead.
+                        modelPlan = first.plan
+                        providerID = provider.identifier
+                        notices += first.notices
+                        if !dropped.isEmpty { notices.append("Removed unverified file references: \(dropped.prefix(3).joined(separator: ", ")).") }
+                    } else if first.hasViolations {
                         // One bounded correction attempt: local generation is expensive, so never loop.
                         let issues = (first.unverified + first.demoted + dropped).prefix(12).joined(separator: "; ")
                         let correction = "The previous draft introduced unsupported specifics: \(issues). Regenerate the JSON plan using only details found in the user request, user answers, or retrieved workspace context. Remove unsupported details from actionable fields; do not guess."
                         let retryRequest = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
                                                                iterationLimit: iterationLimit, userAnswers: input.userAnswers,
-                                                               unansweredQuestions: unansweredQuestions, correctiveInstruction: correction)
+                                                               unansweredQuestions: unansweredQuestions, correctiveInstruction: correction, tier: requestTier)
                         do {
                             let retryRaw = try await provider.plan(for: retryRequest)
                             let (retryValid, retryDropped) = try retryRaw.validated(knownPaths: context.knownPaths)
@@ -112,6 +125,7 @@ public struct PromptOptimizer: Sendable {
                     } else {
                         modelPlan = first.plan
                         providerID = provider.identifier
+                        if !dropped.isEmpty { notices.append("Removed unverified file references: \(dropped.prefix(3).joined(separator: ", ")).") }
                     }
                 } catch let error as ModelPlan.ValidationError {
                     notices.append("The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
@@ -131,7 +145,7 @@ public struct PromptOptimizer: Sendable {
             notices.append("Built locally (no model configured).")
         }
 
-        var plan = modelPlan.map { Self.plan(from: $0, analysis: analysis, context: context, unanswered: unansweredQuestions) } ?? Self.localPlan(analysis: analysis, context: context)
+        var plan = modelPlan.map { Self.plan(from: $0, analysis: analysis, context: context, unanswered: unansweredQuestions) } ?? Self.localPlan(analysis: analysis, context: context, quick: quick)
         plan.workspaceID = input.workspace?.id
         plan.mode = input.mode
         plan.selectedTechniques = techniques
@@ -187,6 +201,13 @@ public struct PromptOptimizer: Sendable {
         let componentIDs = Set(context.components.map(\.id))
         // Restating the whole request as a "requirement" adds nothing: the objective already says it.
         var m = m
+        // Small models sometimes copy a rule from the prompt into a list. Those lines say nothing about the user's task.
+        func notRuleEcho(_ item: String) -> Bool { !Self.isInstructionEcho(item) }
+        m.confirmedRequirements = m.confirmedRequirements.filter(notRuleEcho)
+        m.suggestedDecisions = m.suggestedDecisions.filter(notRuleEcho)
+        m.constraints = m.constraints.filter(notRuleEcho)
+        m.successCriteria = m.successCriteria.filter(notRuleEcho)
+        m.verificationSteps = m.verificationSteps.filter(notRuleEcho)
         m.confirmedRequirements.removeAll { semanticallySimilar($0, analysis.text) && groundedWordCoverage(analysis.text, $0) >= 0.8 }
         m.constraints.removeAll { $0.count > 40 && groundedWordCoverage(analysis.text, $0) >= 0.8 && groundedWordCoverage($0, analysis.text) >= 0.8 }
         let confirmed = m.confirmedRequirements
@@ -199,6 +220,11 @@ public struct PromptOptimizer: Sendable {
                 source.localizedCaseInsensitiveContains(candidate) || semanticallySimilar(candidate, source)
                     || groundedWordCoverage(candidate, source) >= 0.55
             }
+        }
+        // When the whole request is one sentence containing a constraint, the analyzer returns that entire sentence. Once the model
+        // has split it into atomic constraints, the restated request adds nothing.
+        let focusedAnalysisConstraints = analysis.constraints.filter { c in
+            m.constraints.isEmpty || !(groundedWordCoverage(analysis.text, c) >= 0.9 && groundedWordCoverage(c, analysis.text) >= 0.9)
         }
         let groundedModelConstraints = m.constraints.filter { candidate in
             grounded(candidate)
@@ -227,7 +253,7 @@ public struct PromptOptimizer: Sendable {
             taskType: TaskType(rawValue: m.taskType) ?? analysis.taskType,
             codeReferences: m.codeReferences.map { CodeReference(path: $0.path, symbol: $0.symbol?.nilIfEmpty, reason: $0.reason, source: .model) },
             tasks: m.tasks.map { PlanTask(id: $0.id, title: $0.title, detail: $0.detail, dependsOn: $0.dependsOn) },
-            constraints: nonRedundant(dedupe(analysis.constraints + groundedModelConstraints), against: confirmed),
+            constraints: nonRedundant(dedupe(focusedAnalysisConstraints + groundedModelConstraints), against: confirmed),
             successCriteria: groundedCriteria,
             missingInformation: m.missingInformation,
             confirmedRequirements: dedupe(userConfirmed + additionalConfirmed),
@@ -258,8 +284,14 @@ public struct PromptOptimizer: Sendable {
     }
 
     /// The offline plan: everything here comes from the request text and the analyzer, nothing invented.
-    static func localPlan(analysis: RequestAnalysis, context: RetrievedContext) -> PromptPlan {
-        if analysis.complexity < 2 {
+    static func localPlan(analysis: RequestAnalysis, context: RetrievedContext, quick: Bool = false) -> PromptPlan {
+        if quick, let recipe = QuickRecipes.recipe(for: analysis) {
+            return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType, tasks: recipe.tasks,
+                              constraints: analysis.constraints, successCriteria: recipe.successCriteria,
+                              confirmedRequirements: dedupe(analysis.confirmedRequirements), suggestedDecisions: recipe.suggestions,
+                              verificationInstructions: recipe.verification)
+        }
+        if analysis.complexity < 2 && !quick {
             return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType,
                               constraints: analysis.constraints, confirmedRequirements: dedupe(analysis.confirmedRequirements))
         }
@@ -291,6 +323,13 @@ public struct PromptOptimizer: Sendable {
         return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType, codeReferences: refs, tasks: tasks,
                           constraints: analysis.constraints, successCriteria: criteria, confirmedRequirements: dedupe(analysis.confirmedRequirements),
                           verificationInstructions: ["Run the existing tests for the affected code.", "Run the build or type checker."])
+    }
+
+    static func isInstructionEcho(_ item: String) -> Bool {
+        let l = item.lowercased()
+        return ["do not invent", "don't invent", "never invent", "use only paths", "only paths from", "paths from the context", "do not ask question",
+                "don't ask question", "no user input", "do not guess", "omit empty", "omit keys", "json object", "untrusted", "from the request and the context",
+                "do not return", "missinginformation"].contains { l.contains($0) }
     }
 
     static func dedupe(_ items: [String]) -> [String] {

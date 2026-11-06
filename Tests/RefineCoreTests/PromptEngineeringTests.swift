@@ -185,11 +185,13 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertNotEqual(plan.optimizedPrompt, request)
     }
 
-    func testAutoKeepsSimpleRequestSimple() async throws {
+    func testAutoImprovesSimpleRequestInstantlyWithoutExpandingIt() async throws {
         let plan = try await offline.optimize(.init(text: "Rename this variable", mode: .auto))
-        XCTAssertEqual(plan.selectedTechniques, [.zeroShot])
-        XCTAssertEqual(plan.optimizedPrompt, "Rename this variable")
         XCTAssertEqual(plan.provider, "local")
+        XCTAssertTrue(plan.optimizedPrompt.hasPrefix("## Objective\nRename this variable"))
+        XCTAssertTrue(plan.optimizedPrompt.contains("Find every usage"), "A rename gets a usage search step.")
+        XCTAssertTrue(plan.optimizedPrompt.contains("## Acceptance criteria"))
+        XCTAssertLessThan(plan.optimizedPrompt.split(separator: "\n").count, 22, "Simple requests must stay compact.")
     }
 
     func testAdvancedAddsStagesAndBoundedLoop() async throws {
@@ -290,15 +292,90 @@ final class PromptEngineeringTests: XCTestCase {
         } catch { XCTAssertEqual(error as? LLMError, .modelNotInstalled) }
     }
 
-    func testSimpleAutoAndBasicRequestsStayConciseWithoutLoadingTheModel() async throws {
+    func testSimpleAutoAndBasicRequestsNeverCallTheModel() async throws {
+        // A provider that always fails proves no model call is made: the request is improved by local rules.
         let unavailable = StubProvider(result: .failure(.modelNotInstalled))
         for mode in [PromptMode.auto, .basic] {
             let plan = try await PromptOptimizer(provider: unavailable).optimize(.init(text: "Rename Save to Continue", mode: mode))
-            XCTAssertEqual(plan.selectedTechniques, [.zeroShot])
-            XCTAssertEqual(plan.optimizedPrompt, "Rename Save to Continue")
-            XCTAssertTrue(plan.tasks.isEmpty)
             XCTAssertEqual(plan.provider, "local")
+            XCTAssertTrue(plan.notices.isEmpty)
+            XCTAssertEqual(plan.tasks.count, 3)
+            XCTAssertTrue(plan.optimizedPrompt.contains("Rename Save to Continue"))
+            XCTAssertNotEqual(plan.optimizedPrompt, "Rename Save to Continue")
         }
+    }
+
+    func testRouterSendsRequestsToTheRightTier() {
+        func tier(_ text: String, _ mode: PromptMode = .auto, gaps: Int = 0, answers: Bool = false) -> OptimizationTier {
+            let analysis = RequestAnalysis(text)
+            return OptimizationRouter.tier(analysis: analysis, mode: mode, pendingGaps: gaps,
+                                           hasLocalCoverage: QuickRecipes.recipe(for: analysis) != nil || Playbook.match(analysis, context: RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false)) != nil,
+                                           hasAnswers: answers, hasContext: false)
+        }
+        XCTAssertEqual(tier("Rename Save to Continue"), .simple)
+        XCTAssertEqual(tier("Rename Save to Continue", gaps: 1), .simple, "A recipe covers it even with an open question.")
+        XCTAssertEqual(tier("the animation for opening the notch is bad"), .simple, "The motion playbook covers it.")
+        XCTAssertEqual(tier("add dark mode", .basic), .moderate, "A short feature still needs the model.")
+        XCTAssertEqual(tier("saving a profile sometimes loses the avatar"), .moderate)
+        XCTAssertEqual(tier("Rename Save to Continue", answers: true), .moderate)
+        XCTAssertEqual(tier("Rename Save to Continue", .advanced), .complex)
+        XCTAssertEqual(tier("saving a profile sometimes loses the avatar and the settings page crashes when the name is empty, so fix both, keep the current layout, don't change the public API, add tests for each case, and report which files changed and why"), .complex)
+    }
+
+    func testModerateRequestsGetTheCompactPromptAndComplexOnesTheFullPrompt() {
+        func prompt(_ tier: OptimizationTier) -> String {
+            OptimizationRequest(analysis: RequestAnalysis("saving a profile sometimes loses the avatar"), mode: .auto, techniques: [.structured],
+                                context: RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false),
+                                iterationLimit: 0, tier: tier).modelPrompt
+        }
+        XCTAssertFalse(prompt(.moderate).contains("Example of the desired behavior"))
+        XCTAssertTrue(prompt(.complex).contains("Example of the desired behavior"))
+        XCTAssertLessThan(prompt(.moderate).count * 2, prompt(.complex).count + 400, "The compact prompt must be much smaller.")
+        XCTAssertFalse(prompt(.moderate).contains("<workspace_context_json_untrusted>"), "Empty context is not sent.")
+        XCTAssertFalse(prompt(.moderate).contains("<unanswered_checklist_questions>"))
+    }
+
+    func testSloppyTaskIdsAndDependenciesAreRepairedInsteadOfRejected() throws {
+        let json = #"{"objective":"Add dark mode","tasks":[{"id":"","title":"Find the theme"},{"id":"","title":"Add the toggle","dependsOn":["Find the theme"]},{"id":"t2","title":"Check screens","dependsOn":["dark mode toggle","t1"]}]}"#
+        let plan = try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+        let (valid, _) = try plan.validated(knownPaths: [])
+        XCTAssertEqual(Set(valid.tasks.map(\.id)).count, 3, "Ids are unique.")
+        XCTAssertEqual(valid.tasks[1].dependsOn, [valid.tasks[0].id], "A title reference resolves to that task's id.")
+        XCTAssertFalse(valid.tasks[2].dependsOn.contains("dark mode toggle"), "A dependency that points nowhere is dropped.")
+    }
+
+    func testRulesCopiedFromThePromptAreDroppedFromTheResult() async throws {
+        var generated = ModelPlan(intent: "Fix avatar loss", taskType: "", role: "", objective: "Fix avatar loss when saving a profile")
+        generated.suggestedDecisions = ["Check the avatar saving logic", "do not invent files, dependencies, or APIs", "use only paths from the context"]
+        generated.successCriteria = ["The avatar is kept after saving", "no user input required"]
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated)))
+            .optimize(.init(text: "saving a profile sometimes loses the avatar", mode: .auto))
+        XCTAssertEqual(plan.suggestedDecisions, ["Check the avatar saving logic"])
+        XCTAssertEqual(plan.successCriteria, ["The avatar is kept after saving"])
+    }
+
+    func testWholeRequestIsNotRepeatedAsAConstraintOnceTheModelSplitsIt() async throws {
+        var generated = ModelPlan(intent: "Make search faster", taskType: "", role: "", objective: "Make search faster without changing result order or the public API")
+        generated.constraints = ["Do not change the result order", "Do not change the public API"]
+        let request = "make search faster but don't change the result order or the public API"
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated))).optimize(.init(text: request, mode: .auto))
+        XCTAssertFalse(plan.constraints.contains(request))
+        XCTAssertEqual(plan.constraints.count, 2)
+    }
+
+    func testListFieldsAcceptABareString() throws {
+        let json = #"{"objective":"Add a tooltip","successCriteria":"Tooltip appears on hover","constraints":["Keep the button"]}"#
+        let plan = try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+        XCTAssertEqual(plan.successCriteria, ["Tooltip appears on hover"])
+        XCTAssertEqual(plan.constraints, ["Keep the button"])
+    }
+
+    func testCompactSchemaStillDecodesWithIntentAndTaskTypeOmitted() throws {
+        let json = #"{"objective":"Fix the avatar loss","tasks":[{"id":"t1","title":"Reproduce"}],"successCriteria":["Avatar is kept"]}"#
+        let plan = try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+        XCTAssertEqual(plan.intent, "Fix the avatar loss")
+        XCTAssertEqual(plan.taskType, "")
+        XCTAssertNoThrow(try plan.validated(knownPaths: []))
     }
 
     func testChainingProducesOrderedStandalonePrompts() async throws {

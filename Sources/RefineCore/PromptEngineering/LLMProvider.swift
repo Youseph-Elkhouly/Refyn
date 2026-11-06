@@ -91,20 +91,58 @@ public struct ModelPlan: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         intent = try c.decodeIfPresent(String.self, forKey: .intent) ?? ""
-        taskType = try c.decodeIfPresent(String.self, forKey: .taskType) ?? "other"
+        taskType = try c.decodeIfPresent(String.self, forKey: .taskType) ?? ""
         role = try c.decodeIfPresent(String.self, forKey: .role) ?? ""
         objective = try c.decodeIfPresent(String.self, forKey: .objective) ?? ""
-        confirmedRequirements = try c.decodeIfPresent([String].self, forKey: .confirmedRequirements) ?? []
-        suggestedDecisions = try c.decodeIfPresent([String].self, forKey: .suggestedDecisions) ?? []
-        constraints = try c.decodeIfPresent([String].self, forKey: .constraints) ?? []
+        confirmedRequirements = Self.strings(c, .confirmedRequirements)
+        suggestedDecisions = Self.strings(c, .suggestedDecisions)
+        constraints = Self.strings(c, .constraints)
         tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
-        successCriteria = try c.decodeIfPresent([String].self, forKey: .successCriteria) ?? []
-        missingInformation = try c.decodeIfPresent([String].self, forKey: .missingInformation) ?? []
-        verificationSteps = try c.decodeIfPresent([String].self, forKey: .verificationSteps) ?? []
+        successCriteria = Self.strings(c, .successCriteria)
+        missingInformation = Self.strings(c, .missingInformation)
+        verificationSteps = Self.strings(c, .verificationSteps)
         codeReferences = try c.decodeIfPresent([Reference].self, forKey: .codeReferences) ?? []
         plannedComponents = try c.decodeIfPresent([Planned].self, forKey: .plannedComponents)
         exampleReport = try c.decodeIfPresent(String.self, forKey: .exampleReport)
         intentPreserved = try c.decodeIfPresent(Bool.self, forKey: .intentPreserved) ?? true
+        // The compact schemas leave these out: the objective doubles as the intent, and the analyzer already knows the task type.
+        if intent.trimmingCharacters(in: .whitespaces).isEmpty { intent = objective }
+    }
+
+    /// Small models sometimes write a one-item list as a bare string. Accept both rather than discarding the whole plan.
+    private static func strings(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [String] {
+        if let list = try? c.decodeIfPresent([String].self, forKey: key) { return list }
+        if let single = try? c.decodeIfPresent(String.self, forKey: key) {
+            let trimmed = single.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [trimmed]
+        }
+        return []
+    }
+
+    /// Small models often leave task ids empty or repeat them, and sometimes name a dependency by its title.
+    /// Give every task a unique id, resolve title references, and drop dependencies that point nowhere.
+    static func repairedTasks(_ tasks: [Task]) -> [Task] {
+        var used = Set<String>()
+        var fixed = tasks
+        for i in fixed.indices {
+            var id = fixed[i].id.trimmingCharacters(in: .whitespaces)
+            if id.isEmpty || used.contains(id) {
+                var n = i + 1
+                while used.contains("t\(n)") { n += 1 }
+                id = "t\(n)"
+            }
+            used.insert(id)
+            fixed[i].id = id
+        }
+        let byTitle = Dictionary(fixed.map { ($0.title.lowercased(), $0.id) }, uniquingKeysWith: { first, _ in first })
+        for i in fixed.indices {
+            fixed[i].dependsOn = fixed[i].dependsOn.compactMap { ref in
+                if used.contains(ref) { return ref == fixed[i].id ? nil : ref }
+                if let id = byTitle[ref.lowercased()], id != fixed[i].id { return id }
+                return nil
+            }
+        }
+        return fixed
     }
 
     public enum ValidationError: Error, LocalizedError, Equatable {
@@ -127,11 +165,10 @@ public struct ModelPlan: Codable, Hashable, Sendable {
         for (name, list) in [("tasks", tasks.count), ("constraints", constraints.count), ("success criteria", successCriteria.count), ("references", codeReferences.count)] where list > 25 {
             throw ValidationError.tooLarge(name)
         }
-        var ids = Set<String>()
-        for t in tasks { guard ids.insert(t.id).inserted else { throw ValidationError.duplicateTaskID(t.id) } }
-        for t in tasks { for d in t.dependsOn where !ids.contains(d) { throw ValidationError.unknownDependency(d) } }
-        guard PromptComposer.topologicalOrder(tasks.map { PlanTask(id: $0.id, title: $0.title, dependsOn: $0.dependsOn) }) != nil else { throw ValidationError.cyclicDependencies }
         var copy = self
+        copy.tasks = Self.repairedTasks(tasks)
+        // Cycles are never repaired silently: they mean the plan is not a usable order.
+        guard PromptComposer.topologicalOrder(copy.tasks.map { PlanTask(id: $0.id, title: $0.title, dependsOn: $0.dependsOn) }) != nil else { throw ValidationError.cyclicDependencies }
         // A path the analyzer never saw is not cited as fact.
         let dropped = codeReferences.filter { ref in !knownPaths.contains(ref.path) && !knownPaths.contains(where: { $0.hasPrefix(ref.path + "/") }) }.map(\.path)
         copy.codeReferences.removeAll { dropped.contains($0.path) }
@@ -150,7 +187,10 @@ public struct OptimizationRequest: Sendable, Hashable {
     public var userAnswers: [PromptAnswer]
     public var unansweredQuestions: [String]
     public var correctiveInstruction: String?
-    public init(analysis: RequestAnalysis, mode: PromptMode, techniques: [PromptTechnique], context: RetrievedContext, iterationLimit: Int, userAnswers: [PromptAnswer] = [], unansweredQuestions: [String] = [], correctiveInstruction: String? = nil) {
+    /// Selects the prompt size and output budget. Defaults to the full path.
+    public var tier: OptimizationTier
+    public init(analysis: RequestAnalysis, mode: PromptMode, techniques: [PromptTechnique], context: RetrievedContext, iterationLimit: Int, userAnswers: [PromptAnswer] = [], unansweredQuestions: [String] = [], correctiveInstruction: String? = nil, tier: OptimizationTier = .complex) {
+        self.tier = tier
         self.analysis = analysis; self.mode = mode; self.techniques = techniques; self.context = context; self.iterationLimit = iterationLimit; self.userAnswers = userAnswers
         self.unansweredQuestions = unansweredQuestions
         self.correctiveInstruction = correctiveInstruction

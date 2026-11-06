@@ -47,6 +47,8 @@ final class AppModel {
     var banner: Banner?
     let voice = VoiceController()
     let localModel = LocalModelManager()
+    /// Optional small model that answers moderate requests faster. Used only when downloaded.
+    let fastModel = LocalModelManager(modelID: LocalModelManager.fastModelID)
 
     let store: WorkspaceStore
     private(set) var helper: HelperClient
@@ -287,7 +289,7 @@ final class AppModel {
         isOptimizing = true
         defer { isOptimizing = false }
         banner = nil
-        let provider: (any LLMProvider)? = LocalLLMProvider(manager: localModel)
+        let provider: (any LLMProvider)? = LocalLLMProvider(manager: localModel, fastManager: fastModel)
         let optimizer = PromptOptimizer(provider: provider)
         let input = PromptOptimizer.Input(text: text, mode: mode, customTechniques: customTechniques, workspace: current, graph: workspaceGraph,
                                           notes: notes, iterationLimit: Preferences.iterationLimit, userAnswers: answers, unansweredQuestions: unanswered)
@@ -311,6 +313,7 @@ final class AppModel {
 
     func cancelOptimization() {
         localModel.cancel()
+        fastModel.cancel()
     }
 
     func copy(_ text: String) {

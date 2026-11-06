@@ -100,6 +100,40 @@ struct ModelSettings: View {
                     Text(managementError).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
                 }
             }
+            SettingsSection(title: "Fast model (optional)", footnote: "Qwen3 1.7B, 4-bit · about 1 GB download. Answers everyday requests in a few seconds instead of about ten. Without it, the main model handles everything, just more slowly. Complex requests always use the main model.") {
+                SettingsRow(title: "Qwen3 1.7B · 4-bit", detail: model.fastModel.state.title, divider: false) {
+                    if case .loading(let progress) = model.fastModel.state {
+                        HStack(spacing: Theme.Space.sm) {
+                            ProgressView(value: progress).frame(width: 120).tint(Theme.text)
+                            Text("\(Int(progress * 100))%").font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+                        }
+                    } else if model.fastModel.state == .generating {
+                        StatusIndicator(kind: .busy, label: "Running")
+                    } else if model.fastModel.state == .ready {
+                        StatusIndicator(kind: .ready, label: "Loaded")
+                    } else if model.fastModel.isInstalled {
+                        StatusIndicator(kind: .ready, label: "Downloaded")
+                    } else {
+                        StatusIndicator(kind: .idle, label: "Not installed")
+                    }
+                }
+                HStack(spacing: Theme.Space.sm) {
+                    if case .loading = model.fastModel.state {
+                        RButton(title: "Cancel download", kind: .secondary) { model.fastModel.cancel() }
+                    } else if model.fastModel.isInstalled {
+                        RButton(title: "Remove", kind: .ghost) {
+                            do { try model.fastModel.removeDownloadedModel(); managementError = nil }
+                            catch { managementError = error.localizedDescription }
+                        }
+                    } else {
+                        RButton(title: "Download fast model", symbol: "arrow.down.circle", kind: .secondary) { Task { await model.fastModel.install() } }
+                    }
+                    Spacer()
+                }
+                if case .failed(let message) = model.fastModel.state {
+                    Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
+                }
+            }
             SettingsSection(title: "Prompts", footnote: "Refyn asks for missing task details before local optimization. You can skip questions and generate with open questions instead.") {
                 SettingsRow(title: "Ask for missing information", detail: "Clarify vague requests before generation.") {
                     RToggle(title: "Ask before optimizing", isOn: $askForMissingInformation)
