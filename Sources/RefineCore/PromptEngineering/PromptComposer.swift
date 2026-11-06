@@ -35,7 +35,8 @@ public enum PromptComposer {
         if t.contains(.constraints), !plan.constraints.isEmpty { s.append(section("Constraints", bullets(plan.constraints))) }
         if let g = plan.guidance {
             s.append(section("Investigate first — \(g.topic)", bullets(g.investigate)))
-            s.append(section("What good looks like (suggested bar, not stated by the user — adapt it to this product)", bullets(g.goodLooksLike)))
+            s.append(section(g.direction == nil ? "What good looks like (suggested bar, not stated by the user — adapt it to this product)"
+                            : "Target quality (derived from your request — tune the numbers to taste)", bullets(g.goodLooksLike)))
             s.append(section("Examples of the target quality", bullets(g.examples)))
             s.append(section("Avoid", bullets(g.avoid)))
         }

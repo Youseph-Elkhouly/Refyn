@@ -38,4 +38,24 @@ final class PlaybookTests: XCTestCase {
         let none = RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false)
         XCTAssertFalse(Playbook.motion(none).goodLooksLike.contains { $0.contains("Apple platforms") })
     }
+
+    func testSlowSmoothRequestGetsSlowNumbersNotFastOnes() async throws {
+        let plan = try await optimize("im building an notch app fix this prompt: it should be like a very slow opening and closing and smooth")
+        let prompt = plan.optimizedPrompt
+        print(prompt)
+        XCTAssertEqual(plan.guidance?.direction, "very slow, smooth")
+        XCTAssertTrue(prompt.contains("800–1200 ms"))
+        XCTAssertTrue(prompt.contains("soft ease-in-out"))
+        XCTAssertTrue(prompt.contains("corner radius"))
+        XCTAssertTrue(prompt.contains("Target quality (derived from your request"))
+        XCTAssertFalse(prompt.contains("200–350 ms"), "A request for slow motion must not be pulled toward fast defaults.")
+        XCTAssertFalse(prompt.contains("im building"), "The meta preface should not leak into the objective.")
+        XCTAssertTrue(prompt.contains("very slow opening and closing") || prompt.contains("very slow, smooth"))
+    }
+
+    func testFastRequestGetsFastNumbers() {
+        let ctx = RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false)
+        let g = Playbook.match(RequestAnalysis("make the menu open snappy and quick"), context: ctx)
+        XCTAssertTrue(g?.goodLooksLike.first?.contains("120–200 ms") == true)
+    }
 }

@@ -138,7 +138,16 @@ public struct PromptOptimizer: Sendable {
         let role = modelRole.flatMap { $0.count >= 16 && $0.lowercased() != "refine" ? $0 : nil } ?? Self.defaultRole(context)
         var objective = modelPlan?.objective ?? analysis.intent
         if guidance != nil, modelPlan == nil {
-            objective += (objective.hasSuffix(".") ? "" : ".") + " The request does not say what exactly is wrong, so first establish that, then fix it."
+            if let preface = objective.range(of: #"^.*?\bprompt\s*:\s*"#, options: [.regularExpression, .caseInsensitive]) {
+                objective = String(objective[preface.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                objective = objective.prefix(1).uppercased() + objective.dropFirst()
+            }
+            objective += objective.hasSuffix(".") ? "" : "."
+            if let direction = guidance?.direction {
+                objective += " The user wants it to feel \(direction); the target quality below is derived from that."
+            } else {
+                objective += " The request does not say what exactly is wrong, so first establish that, then fix it."
+            }
         }
         let parts = PromptComposer.Parts(role: role, objective: objective,
                                          exampleReport: modelPlan?.exampleReport, context: context)
