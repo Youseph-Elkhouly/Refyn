@@ -93,7 +93,7 @@ public struct RequestAnalysis: Sendable, Hashable {
             "\\b([a-z]+[A-Z][A-Za-z0-9]*)\\b",                 // camelCase
             "\\b([A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*)\\b",         // PascalCase with an inner capital
             "\\b([a-z0-9]+_[a-z0-9_]+)\\b",                    // snake_case
-            "(/[\\w/:{}\\[\\]-]+)",                           // routes / paths
+            "(?<![\\w)\\]])(/[\\w/:{}\\[\\]-]+)",                // routes / paths, not "UI/UX" or "open/close"
             "\\b(\\d+(?:\\.\\d+)?(?:ms|s|px|%|mb|gb|kb)?)\\b",   // numbers and units
         ]
         for p in patterns {

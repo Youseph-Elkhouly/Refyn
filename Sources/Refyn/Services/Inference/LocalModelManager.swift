@@ -126,7 +126,7 @@ final class LocalModelManager {
         state = .generating
         defer { state = .ready }
         do {
-            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 1150, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
+            let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 1600, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
             let task = Task<String, Error> {
                 var result = ""
                 var detector = JSONObjectEndDetector()

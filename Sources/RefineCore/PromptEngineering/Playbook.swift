@@ -35,13 +35,16 @@ public enum Playbook {
             || (has(feel) && has(movement)) {
             return motion(context, request: text)
         }
-        if has(["slow", "laggy", "lag ", "freeze", "freezes", "hangs", "takes forever", "performance", "latency", "memory usage", "speed up"]) {
+        if !["add ", "implement ", "create ", "build "].contains(where: { text.hasPrefix($0) }),
+           has(["slow", "laggy", "lag ", "freeze", "freezes", "hangs", "takes forever", "performance", "latency", "memory usage", "speed up"]) {
             return performance
         }
-        if has(["ugly", "looks bad", "looks off", "spacing", "alignment", "typography", "font", "color", "contrast", "layout", "design", "polish", "dark mode"]) {
+        // Creating something new is a feature, not a complaint about something existing.
+        let isCreation = ["add ", "implement ", "create ", "build ", "introduce ", "support "].contains { text.hasPrefix($0) }
+        if !isCreation, has(["ugly", "looks bad", "looks off", "spacing", "alignment", "typography", "contrast", "polish", "premium", "cluttered"]) {
             return visual
         }
-        if has(["bug", "broken", "crash", "doesn't work", "not working", "fails", "failing", "error", "regression"]) {
+        if !isCreation, has(["bug", "broken", "crash", "doesn't work", "not working", "fails", "failing", "error", "regression"]) {
             return bug
         }
         return nil

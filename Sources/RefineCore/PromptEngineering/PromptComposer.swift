@@ -89,6 +89,8 @@ public enum PromptComposer {
             """
             s.append(section("Example report", "```\n\(example)\n```"))
         }
+        // A request that yields nothing beyond its objective stays a plain sentence rather than a lone header.
+        if plan.provider != "local", s.count == 1, s[0].hasPrefix("## Objective") { return parts.objective }
         return s.joined(separator: "\n\n")
     }
 

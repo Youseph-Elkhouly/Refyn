@@ -67,10 +67,14 @@ public struct PromptOptimizer: Sendable {
         // do not bypass the model and return the original sentence as a "Local rules" result.
         let guidance = Playbook.match(analysis, context: context)
         let needsEngineering = guidance != nil || !pendingGaps.isEmpty || !input.userAnswers.isEmpty || !unansweredQuestions.isEmpty
-        if input.mode != .custom && needsEngineering && techniques.allSatisfy({ [.zeroShot, .contextInjection, .constraints].contains($0) }) {
+        // With a model available, even a simple request is worth improving. A bare zero-shot rewrite would hand
+        // back the user's own sentence, so use the structured sections instead (the composer drops empty ones).
+        let originalTechniques = techniques
+        let lightweight = techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
+        if input.mode != .custom && lightweight && (needsEngineering || provider != nil) {
             techniques = PromptTechnique.allCases.filter { [.structured, .constraints, .acceptanceCriteria].contains($0) || ($0 == .outputFormat && guidance != nil) || ($0 == .contextInjection && !context.isEmpty) }
         }
-        let directRewrite = !needsEngineering && techniques.contains(.zeroShot) && techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
+        let directRewrite = provider == nil || (input.mode == .custom && !needsEngineering && techniques.contains(.zeroShot) && lightweight)
         if let provider {
             if !directRewrite {
                 let request = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
@@ -114,6 +118,10 @@ public struct PromptOptimizer: Sendable {
                 } catch let error as LLMError {
                     if case .invalidResponse = error {
                         notices.append("The local model returned malformed output; used the deterministic local prompt builder instead.")
+                    } else if error == .modelNotInstalled, !needsEngineering {
+                        // A simple request still works without the model; only the extra improvement is skipped.
+                        techniques = originalTechniques
+                        notices.append("The local model is not installed, so this simple request was only cleaned up. Download it in Settings for a fuller rewrite.")
                     } else {
                         throw error
                     }
@@ -123,7 +131,7 @@ public struct PromptOptimizer: Sendable {
             notices.append("Built locally (no model configured).")
         }
 
-        var plan = modelPlan.map { Self.plan(from: $0, analysis: analysis, context: context) } ?? Self.localPlan(analysis: analysis, context: context)
+        var plan = modelPlan.map { Self.plan(from: $0, analysis: analysis, context: context, unanswered: unansweredQuestions) } ?? Self.localPlan(analysis: analysis, context: context)
         plan.workspaceID = input.workspace?.id
         plan.mode = input.mode
         plan.selectedTechniques = techniques
@@ -175,8 +183,12 @@ public struct PromptOptimizer: Sendable {
         return "You are a senior engineer working in the \(ctx.workspaceName.isEmpty ? "current" : "`\(ctx.workspaceName)`") repository\(stack). Make focused, production-quality changes that follow the existing patterns."
     }
 
-    static func plan(from m: ModelPlan, analysis: RequestAnalysis, context: RetrievedContext) -> PromptPlan {
+    static func plan(from m: ModelPlan, analysis: RequestAnalysis, context: RetrievedContext, unanswered: [String] = []) -> PromptPlan {
         let componentIDs = Set(context.components.map(\.id))
+        // Restating the whole request as a "requirement" adds nothing: the objective already says it.
+        var m = m
+        m.confirmedRequirements.removeAll { semanticallySimilar($0, analysis.text) && groundedWordCoverage(analysis.text, $0) >= 0.8 }
+        m.constraints.removeAll { $0.count > 40 && groundedWordCoverage(analysis.text, $0) >= 0.8 && groundedWordCoverage($0, analysis.text) >= 0.8 }
         let confirmed = m.confirmedRequirements
         let taskText = m.tasks.map { "\($0.title) \($0.detail)" }
         let userConfirmed = dedupe(analysis.confirmedRequirements)
@@ -198,8 +210,17 @@ public struct PromptOptimizer: Sendable {
             }
         }
         let optionalModelRequirements = m.confirmedRequirements.filter { !grounded($0) }
-        let groundedCriteria = m.successCriteria.filter(grounded)
-        let optionalModelCriteria = m.successCriteria.filter { !grounded($0) }
+        // A proposed outcome stays an acceptance criterion when the request supports it, or when it adds no new
+        // codebase fact and does not answer a question the user skipped. Anything else is only a suggestion.
+        let requestText = analysis.searchText.lowercased()
+        func isProposable(_ criterion: String) -> Bool {
+            if grounded(criterion) { return true }
+            let newFacts = RequestAnalysis.keyTerms(criterion).filter { !InventionGuard.isValue($0) && !requestText.contains($0.lowercased()) }
+            if !newFacts.isEmpty { return false }
+            return !unanswered.contains { groundedWordCoverage($0, criterion) >= 0.35 }
+        }
+        let groundedCriteria = m.successCriteria.filter(isProposable)
+        let optionalModelCriteria = m.successCriteria.filter { !isProposable($0) }
         return PromptPlan(
             originalPrompt: analysis.text,
             intent: m.intent,

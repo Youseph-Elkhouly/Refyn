@@ -26,6 +26,11 @@ public enum InventionGuard {
         func unsupported(_ text: String) -> [String] {
             unsupportedSpecifics(in: text, sources: sources, allowedNumbers: allowedNumbers)
         }
+        // Suggestions, tasks, success criteria and verification steps may propose concrete starting values
+        // (a target duration, a size, a count). Those are clearly the optimizer's proposals, so only invented
+        // codebase facts (paths, identifiers, names, quoted labels) are flagged there. Statements presented as
+        // the user's own (requirements, constraints, the objective) stay strict about every specific.
+        func unsupportedFacts(_ text: String) -> [String] { unsupported(text).filter { !isValue($0) } }
 
         var plan = original
         var demoted: [String] = []
@@ -47,9 +52,9 @@ public enum InventionGuard {
             plan.exampleReport = nil
         }
 
-        func keepOrDemote(_ values: [String]) -> [String] {
+        func keepOrDemote(_ values: [String], lenientValues: Bool = false) -> [String] {
             values.filter { value in
-                let terms = unsupported(value)
+                let terms = lenientValues ? unsupportedFacts(value) : unsupported(value)
                 guard !terms.isEmpty else { return true }
                 demoted.append(value)
                 unverified += terms
@@ -62,7 +67,7 @@ public enum InventionGuard {
 
         // Optional suggestions may contain new ideas, but unsupported concrete details must be
         // visible as suggestions and flagged so the single corrective attempt can remove them.
-        for suggestion in plan.suggestedDecisions { unverified += unsupported(suggestion) }
+        for suggestion in plan.suggestedDecisions { unverified += unsupportedFacts(suggestion) }
 
         var references: [ModelPlan.Reference] = []
         for reference in plan.codeReferences {
@@ -78,7 +83,7 @@ public enum InventionGuard {
         // Unsupported task details are not allowed to survive merely as executable instructions.
         // Move those tasks to suggestions and remove downstream tasks that depend on them.
         let unsupportedTaskIDs = Set(plan.tasks.filter { task in
-            let terms = unsupported(task.title + " " + task.detail)
+            let terms = unsupportedFacts(task.title + " " + task.detail)
             guard !terms.isEmpty else { return false }
             demoted.append(([task.title, task.detail].filter { !$0.isEmpty }).joined(separator: " — "))
             unverified += terms
@@ -96,8 +101,8 @@ public enum InventionGuard {
         }
         plan.tasks.removeAll { removedIDs.contains($0.id) }
 
-        plan.successCriteria = keepOrDemote(plan.successCriteria)
-        plan.verificationSteps = keepOrDemote(plan.verificationSteps)
+        plan.successCriteria = keepOrDemote(plan.successCriteria, lenientValues: true)
+        plan.verificationSteps = keepOrDemote(plan.verificationSteps, lenientValues: true)
 
         let uniqueDemoted = unique(demoted)
         plan.suggestedDecisions += uniqueDemoted.filter { item in
@@ -131,6 +136,11 @@ public enum InventionGuard {
             }) { return false }
             return true
         }
+    }
+
+    /// A bare number or a number with a unit, as opposed to a name, path or label.
+    static func isValue(_ term: String) -> Bool {
+        term.range(of: #"^\d+(?:\.\d+)?(?:ms|s|px|%|mb|gb|kb)?$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func isSupported(_ term: String, in sources: String) -> Bool {

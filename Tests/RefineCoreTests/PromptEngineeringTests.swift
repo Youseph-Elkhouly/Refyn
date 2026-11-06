@@ -342,4 +342,28 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertTrue(req.modelPrompt.contains("Example of the desired behavior"))
         XCTAssertFalse(req.modelPrompt.contains("responseSchema"))
     }
+
+    func testMetaPrefaceMovesToBackgroundAndExamplesDoNotLeak() {
+        func request(_ text: String) -> OptimizationRequest {
+            OptimizationRequest(analysis: RequestAnalysis(text), mode: .auto, techniques: [.structured],
+                                context: RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false),
+                                iterationLimit: 0)
+        }
+        let prompt = request("im building an notch app fix this prompt: it should be a very slow opening and closing and smooth").modelPrompt
+        XCTAssertTrue(prompt.contains("<user_request>\nit should be a very slow opening and closing and smooth\n</user_request>"))
+        XCTAssertTrue(prompt.contains("<user_background>"))
+        XCTAssertTrue(prompt.contains("im building an notch app"))
+        // A plain refactor must not be shown the constraints example whose details (public API) could leak into it.
+        XCTAssertFalse(request("Rename Save to Continue").modelPrompt.contains("public API"))
+        XCTAssertTrue(request("make search faster but don't change the result order").modelPrompt.contains("public API"))
+    }
+
+    func testEchoedRequestIsNotListedAsARequirement() async throws {
+        var generated = ModelPlan(intent: "Improve the notch opening animation", taskType: "ui", role: "", objective: "Improve the notch opening animation")
+        generated.confirmedRequirements = ["the animation for opening the notch is bad", "Respect Reduce Motion"]
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated)))
+            .optimize(.init(text: "the animation for opening the notch is bad", mode: .auto))
+        XCTAssertFalse(plan.confirmedRequirements.contains("the animation for opening the notch is bad"))
+        XCTAssertFalse(plan.confirmedRequirements.contains { $0.localizedCaseInsensitiveContains("is bad") })
+    }
 }

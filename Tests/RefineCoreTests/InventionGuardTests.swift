@@ -98,4 +98,12 @@ final class InventionGuardTests: XCTestCase {
         XCTAssertFalse(detector.feed("\"b\":{\"c\":[1,2]"))
         XCTAssertTrue(detector.feed("}}"))
     }
+
+    func testSlashSeparatedWordsAreNotRoutes() {
+        let terms = RequestAnalysis.keyTerms("Match the UI/UX language and the opening/closing motion, and/or call GET /api/users/:id")
+        XCTAssertFalse(terms.contains("/UX"))
+        XCTAssertFalse(terms.contains("/closing"))
+        XCTAssertFalse(terms.contains("/or"))
+        XCTAssertTrue(terms.contains("/api/users/:id"))
+    }
 }
