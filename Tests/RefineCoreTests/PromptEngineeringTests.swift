@@ -7,6 +7,22 @@ struct StubProvider: LLMProvider {
     func plan(for request: OptimizationRequest) async throws -> ModelPlan { try result.get() }
 }
 
+private actor SequencedProviderState {
+    let plans: [ModelPlan]
+    private(set) var requests: [OptimizationRequest] = []
+    init(_ plans: [ModelPlan]) { self.plans = plans }
+    func next(_ request: OptimizationRequest) -> ModelPlan {
+        requests.append(request)
+        return plans[min(requests.count - 1, plans.count - 1)]
+    }
+}
+
+private struct SequencedProvider: LLMProvider {
+    let identifier = "sequenced-model"
+    let state: SequencedProviderState
+    func plan(for request: OptimizationRequest) async throws -> ModelPlan { await state.next(request) }
+}
+
 extension ModelPlan {
     static func sample(paths: [String] = ["src/services"], tasks: [Task]? = nil) -> ModelPlan {
         ModelPlan(intent: "Add pagination to listUsers", taskType: "feature", role: "You are a senior TypeScript engineer.",
@@ -65,6 +81,48 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertFalse(analysis.gaps.isEmpty)
     }
 
+    func testUnderspecifiedShortFeatureDoesNotReturnVerbatimLocalRulesPrompt() async throws {
+        let generated = ModelPlan(
+            intent: "Add team invitations to workspace settings", taskType: "feature", role: "",
+            objective: "Add team invitations to workspace settings, following the user's answers below.",
+            confirmedRequirements: ["Invite users by email; only workspace admins can send invitations."],
+            tasks: [.init(id: "t1", title: "Implement team invitations", detail: "Use the confirmed invitation and permission rules.")],
+            successCriteria: ["The invitation flow follows the confirmed rules."]
+        )
+        let optimizer = PromptOptimizer(provider: StubProvider(result: .success(generated)))
+        let plan = try await optimizer.optimize(.init(
+            text: "Add team invitations to workspace settings", mode: .auto,
+            userAnswers: [.init(id: "feature.acceptance", question: "What observable result will tell us this feature is done?", answer: "Invite users by email; only workspace admins can send invitations.")]
+        ))
+
+        XCTAssertEqual(plan.provider, "stub-model")
+        XCTAssertNotEqual(plan.optimizedPrompt, "Add team invitations to workspace settings")
+        XCTAssertTrue(plan.optimizedPrompt.contains("Requirements (stated by the user)"))
+        XCTAssertTrue(plan.optimizedPrompt.contains("only workspace admins"))
+    }
+
+    func testModelCannotTurnUnaskedCompatibilityIdeasIntoConstraints() async throws {
+        var generated = ModelPlan.sample(paths: [])
+        generated.role = ""
+        generated.objective = "Add team invitations to workspace settings"
+        generated.confirmedRequirements = []
+        generated.constraints = ["Preserve existing UI elements and behavior", "Ensure compatibility with existing workspace settings"]
+        generated.tasks = []
+        generated.successCriteria = ["Existing UI elements and behavior remain unchanged"]
+        let answer = PromptAnswer(id: "feature.acceptance", question: "What result is done?", answer: "Workspace admins can invite people by email.")
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated))).optimize(.init(
+            text: "Add team invitations to workspace settings", mode: .auto,
+            userAnswers: [answer], unansweredQuestions: ["What existing behavior must be preserved?"]
+        ))
+
+        XCTAssertTrue(plan.constraints.isEmpty)
+        XCTAssertTrue(plan.suggestedDecisions.contains("Preserve existing UI elements and behavior"))
+        XCTAssertTrue(plan.suggestedDecisions.contains("Ensure compatibility with existing workspace settings"))
+        XCTAssertTrue(plan.successCriteria.isEmpty)
+        XCTAssertTrue(plan.suggestedDecisions.contains("Existing UI elements and behavior remain unchanged"))
+        XCTAssertFalse(plan.optimizedPrompt.contains("## Constraints"))
+    }
+
     func testWorkspaceFrameworkCanCoverPlatformChecklistItem() {
         let analysis = RequestAnalysis("improve the settings screen")
         let context = RetrievedContext(workspaceName: "Sample", languages: ["Swift"], frameworks: ["SwiftUI"], components: [], notes: [], analyzed: true)
@@ -87,6 +145,14 @@ final class PromptEngineeringTests: XCTestCase {
                                           iterationLimit: 0, userAnswers: [answer])
         XCTAssertTrue(request.modelPrompt.contains("<user_confirmed_clarifications>"))
         XCTAssertTrue(request.modelPrompt.contains(answer.answer))
+    }
+
+    func testDisablingInlineQuestionsStillSuppliesGapsToTheGeneratedPrompt() async throws {
+        let request = "Add team invitations to workspace settings"
+        let plan = try await offline.optimize(.init(text: request, mode: .auto))
+        XCTAssertTrue(plan.missingInformation.contains { $0.localizedCaseInsensitiveContains("observable result") })
+        XCTAssertTrue(plan.optimizedPrompt.contains("## Open questions"))
+        XCTAssertNotEqual(plan.optimizedPrompt, request)
     }
 
     func testAutoKeepsSimpleRequestSimple() async throws {
@@ -134,7 +200,7 @@ final class PromptEngineeringTests: XCTestCase {
         let plan = try await optimizer.optimize(.init(text: "add pagination to listUsers in the users service, don't change the response shape", mode: .advanced, graph: graph))
         XCTAssertEqual(plan.provider, "stub-model")
         XCTAssertEqual(plan.confirmedRequirements, ["Paginate `listUsers` results"])
-        XCTAssertEqual(plan.suggestedDecisions, ["Use a cursor on the id column"])
+        XCTAssertEqual(plan.suggestedDecisions, ["Use a cursor on the id column", "GET /api/users/:id still returns a user"])
         XCTAssertTrue(plan.optimizedPrompt.contains("## Requirements (stated by the user)"))
         XCTAssertTrue(plan.optimizedPrompt.contains("## Suggested approach"))
         XCTAssertTrue(plan.optimizedPrompt.contains("2. Add cursor param (after 1)"))
@@ -144,7 +210,7 @@ final class PromptEngineeringTests: XCTestCase {
     func testFabricatedReferencesAreDropped() async throws {
         let optimizer = PromptOptimizer(provider: StubProvider(result: .success(.sample(paths: ["src/services", "src/made/up.ts"]))))
         let plan = try await optimizer.optimize(.init(text: "add pagination to listUsers", mode: .advanced, graph: try Fixtures.graph()))
-        XCTAssertEqual(plan.codeReferences.map(\.path), ["src/services"])
+        XCTAssertFalse(plan.codeReferences.contains { $0.path == "src/made/up.ts" })
         XCTAssertTrue(plan.notices.contains { $0.contains("src/made/up.ts") })
         XCTAssertFalse(plan.optimizedPrompt.contains("src/made/up.ts"))
     }
@@ -156,6 +222,35 @@ final class PromptEngineeringTests: XCTestCase {
         let plan = try await optimizer.optimize(.init(text: "add pagination to listUsers", mode: .advanced))
         XCTAssertEqual(plan.provider, "local")
         XCTAssertTrue(plan.notices.first?.contains("cyclic") == true)
+    }
+
+    func testNoveltyGuardRetriesOnceAndAcceptsCorrectedPlan() async throws {
+        var invented = ModelPlan.sample()
+        invented.objective = "Add pagination and edit src/private/routes.ts"
+        let corrected = ModelPlan(intent: "Add pagination to listUsers", taskType: "feature", role: "",
+                                  objective: "Add cursor pagination to listUsers.",
+                                  confirmedRequirements: ["Paginate listUsers"],
+                                  tasks: [.init(id: "t1", title: "Paginate listUsers")],
+                                  successCriteria: ["listUsers returns paginated results."])
+        let state = SequencedProviderState([invented, corrected])
+        let plan = try await PromptOptimizer(provider: SequencedProvider(state: state)).optimize(.init(text: "add pagination to listUsers", mode: .advanced))
+        let requests = await state.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].correctiveInstruction?.contains("src/private/routes.ts") == true)
+        XCTAssertEqual(plan.provider, "sequenced-model")
+        XCTAssertFalse(plan.optimizedPrompt.contains("src/private/routes.ts"))
+    }
+
+    func testNoveltyGuardFallsBackAfterOneFailedCorrection() async throws {
+        var invented = ModelPlan.sample()
+        invented.objective = "Add pagination using Redis"
+        let state = SequencedProviderState([invented, invented])
+        let plan = try await PromptOptimizer(provider: SequencedProvider(state: state)).optimize(.init(text: "add pagination to listUsers", mode: .advanced))
+        let requests = await state.requests
+        XCTAssertEqual(requests.count, 2, "A failed correction must not trigger another generation.")
+        XCTAssertEqual(plan.provider, "local")
+        XCTAssertFalse(plan.optimizedPrompt.localizedCaseInsensitiveContains("Redis"))
+        XCTAssertTrue(plan.notices.contains { $0.localizedCaseInsensitiveContains("deterministic prompt builder") })
     }
 
     func testLocalModelFailureIsVisibleInsteadOfSilentlyFallingBack() async {

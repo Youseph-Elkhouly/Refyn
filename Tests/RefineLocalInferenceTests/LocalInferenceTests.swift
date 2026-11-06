@@ -1,8 +1,25 @@
 import XCTest
-import RefineCore
+@testable import RefineCore
 @testable import Refyn
 
 final class LocalInferenceTests: XCTestCase {
+    private struct ClarificationCase {
+        let name: String
+        let request: String
+        let expectedGap: String
+    }
+
+    private let clarificationCases = [
+        ClarificationCase(name: "bug fix", request: "Fix the login bug", expectedGap: "bug.reproduction"),
+        ClarificationCase(name: "feature", request: "Add team invitations to workspace settings", expectedGap: "feature.acceptance"),
+        ClarificationCase(name: "performance", request: "Improve report generation speed", expectedGap: "performance.metric"),
+        ClarificationCase(name: "refactor", request: "Refactor the authorization service", expectedGap: "refactor.behavior"),
+        ClarificationCase(name: "tests", request: "Write tests for CSV export", expectedGap: "test.scenarios"),
+        ClarificationCase(name: "UI", request: "Improve the settings screen", expectedGap: "ui.states"),
+        ClarificationCase(name: "docs", request: "Document account recovery", expectedGap: "docs.audience"),
+        ClarificationCase(name: "configuration", request: "Configure production deployment", expectedGap: "config.secrets"),
+    ]
+
     private struct EvaluationCase {
         let name: String
         let request: String
@@ -14,7 +31,7 @@ final class LocalInferenceTests: XCTestCase {
 
     private let evaluationCases = [
         EvaluationCase(name: "rough feature", request: "add csv export to reports but keep current filters", mode: .auto, retain: ["csv", "filters"], isSimple: false, expectsStructured: false),
-        EvaluationCase(name: "ambiguous", request: "make authentication better", mode: .advanced, retain: ["authentication"], isSimple: false, expectsStructured: true),
+        EvaluationCase(name: "ambiguous", request: "make authentication better", mode: .advanced, retain: ["authentication"], isSimple: false, expectsStructured: false),
         EvaluationCase(name: "complex feature", request: "add account deletion with a confirmation step, revoke sessions, preserve audit records, and test the full flow", mode: .advanced, retain: ["confirmation", "sessions", "audit", "test"], isSimple: false, expectsStructured: true),
         EvaluationCase(name: "bug fix", request: "fix crash when search query is empty; keep the current empty-state text", mode: .auto, retain: ["empty", "empty-state"], isSimple: false, expectsStructured: true),
         EvaluationCase(name: "refactor", request: "extract date formatting into a helper without changing displayed dates", mode: .basic, retain: ["date", "without changing"], isSimple: false, expectsStructured: false),
@@ -26,6 +43,25 @@ final class LocalInferenceTests: XCTestCase {
     func testModelConfigurationUsesQwen3FourBitCheckpoint() {
         XCTAssertEqual(LocalModelManager.modelID, "mlx-community/Qwen3-4B-4bit")
         XCTAssertTrue(LocalModelManager.modelLabel.contains("4-bit"))
+    }
+
+    @MainActor
+    func testOptimizeStopsAtClarificationBeforeReturningLocalRules() async throws {
+        let previousPreference = Preferences.askForMissingInformation
+        Preferences.askForMissingInformation = true
+        defer { Preferences.askForMissingInformation = previousPreference }
+
+        let database = FileManager.default.temporaryDirectory.appending(path: "refyn-clarification-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: database) }
+        let model = AppModel(store: try WorkspaceStore(databaseURL: database))
+        model.input = "Add team invitations to workspace settings"
+        await model.optimize()
+
+        XCTAssertEqual(model.clarification?.requestText, model.input)
+        XCTAssertEqual(model.clarification?.gaps.first?.id, "feature.acceptance")
+        XCTAssertNil(model.plan, "Do not show an unchanged local-rules result before the user answers or skips.")
+        XCTAssertFalse(model.isOptimizing)
+        await model.shutdown()
     }
 
     @MainActor
@@ -54,6 +90,83 @@ final class LocalInferenceTests: XCTestCase {
         for marker in ["timeout", "4xx", "progress UI", "2 retries", "offline", "permanent failure", "upload API"] {
             XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains(marker), "Missing required detail: \(marker)")
         }
+    }
+
+    @MainActor
+    func testQwenOptimizesClarifiedShortFeatureInsteadOfEchoing() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
+            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the local Qwen output-quality check.")
+        }
+        let manager = LocalModelManager()
+        await manager.install()
+        guard manager.state == .ready else { throw LLMError.unavailable(manager.state.title) }
+        let answer = PromptAnswer(
+            id: "feature.acceptance",
+            question: "What observable result will tell us this feature is done?",
+            answer: "Workspace admins can invite a person by email; the invite expires after 7 days."
+        )
+        let prompt = "Add team invitations to workspace settings"
+        let plan = try await PromptOptimizer(provider: LocalLLMProvider(manager: manager)).optimize(.init(
+            text: prompt,
+            mode: .auto,
+            userAnswers: [answer],
+            unansweredQuestions: ["What existing behavior or compatibility must be preserved?"]
+        ))
+        print("Clarified short-feature output:\n\(plan.optimizedPrompt)")
+        XCTAssertEqual(plan.provider, LocalModelManager.modelID)
+        XCTAssertNotEqual(plan.optimizedPrompt.trimmingCharacters(in: .whitespacesAndNewlines), prompt)
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("7 days"))
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("workspace admins"))
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("compatibility"))
+        XCTAssertFalse(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("UI elements") },
+                       "An unanswered scope question must not be turned into an acceptance criterion.")
+    }
+
+    @MainActor
+    func testClarificationQualityEvaluationEightUnderspecifiedAndTwoClearRequests() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
+            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the underspecification and prompt quality evaluation.")
+        }
+        let manager = LocalModelManager()
+        await manager.install()
+        guard manager.state == .ready else { throw LLMError.unavailable(manager.state.title) }
+        let optimizer = PromptOptimizer(provider: LocalLLMProvider(manager: manager))
+        var gapHits = 0
+        var noUnsupported = 0
+        var preserved = 0
+        var totalLatency: Duration = .zero
+
+        for sample in clarificationCases {
+            let analysis = RequestAnalysis(sample.request)
+            let gaps = analysis.gaps
+            if gaps.contains(where: { $0.id == sample.expectedGap }) { gapHits += 1 }
+            let clock = ContinuousClock()
+            let started = clock.now
+            let plan = try await optimizer.optimize(.init(text: sample.request, mode: .auto,
+                                                           unansweredQuestions: gaps.map(\.question)))
+            let elapsed = started.duration(to: clock.now)
+            totalLatency += elapsed
+            let unsupported = InventionGuard.unsupportedSpecifics(in: plan.optimizedPrompt, sources: analysis.searchText, allowedNumbers: [])
+            if unsupported.isEmpty { noUnsupported += 1 }
+            if analysis.missingTerms(in: plan.optimizedPrompt).isEmpty { preserved += 1 }
+            print("Clarification eval [\(sample.name)]: gap=\(gaps.contains { $0.id == sample.expectedGap }); unsupported=\(unsupported); preserved=\(analysis.missingTerms(in: plan.optimizedPrompt).isEmpty); latency=\(Duration.seconds(from: elapsed))s")
+        }
+
+        let clearRequests = [
+            "Rename Save to Continue",
+            "When I submit an expired password, the form shows success instead of an error. Expected: show the invalid-password message; actual: it redirects to the dashboard. Error: AUTH-401.",
+        ]
+        var clearCasesWithoutQuestions = 0
+        for request in clearRequests {
+            let analysis = RequestAnalysis(request)
+            if analysis.gaps.isEmpty { clearCasesWithoutQuestions += 1 }
+        }
+        let meanLatency = Duration.seconds(from: totalLatency) / Double(clarificationCases.count)
+        print("Clarification evaluation summary: expected gap detected \(gapHits)/8; no unsupported specifics \(noUnsupported)/8; original specifics preserved \(preserved)/8; clear controls without questions \(clearCasesWithoutQuestions)/2; mean local latency \(meanLatency)s")
+        XCTAssertEqual(gapHits, 8)
+        XCTAssertEqual(noUnsupported, 8)
+        XCTAssertEqual(preserved, 8)
+        XCTAssertEqual(clearCasesWithoutQuestions, 2)
     }
 
     /// Opt in explicitly because this downloads roughly 2.3 GB on first run and performs real inference.
@@ -100,7 +213,7 @@ final class LocalInferenceTests: XCTestCase {
     @MainActor
     func testPromptEngineeringBaselineEvaluation() async throws {
         guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
-            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the seven-case Qwen quality baseline.")
+            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the eight-case Qwen quality baseline.")
         }
 
         let manager = LocalModelManager()
@@ -116,7 +229,10 @@ final class LocalInferenceTests: XCTestCase {
         for sample in evaluationCases {
             let clock = ContinuousClock()
             let start = clock.now
-            let plan = try await optimizer.optimize(.init(text: sample.request, mode: sample.mode, iterationLimit: 2))
+            let analysis = RequestAnalysis(sample.request)
+            let gaps = analysis.gaps
+            let plan = try await optimizer.optimize(.init(text: sample.request, mode: sample.mode, iterationLimit: 2,
+                                                           unansweredQuestions: gaps.map(\.question)))
             let elapsed = start.duration(to: clock.now)
             totalDuration += elapsed
 
@@ -127,6 +243,9 @@ final class LocalInferenceTests: XCTestCase {
             if sample.isSimple, plan.optimizedPrompt.count <= max(120, sample.request.count * 3), !plan.optimizedPrompt.contains("##") { concise += 1 }
             inventedReferences += plan.codeReferences.count
             if sample.expectsStructured, !plan.tasks.isEmpty, !plan.verificationInstructions.isEmpty { structuredComplex += 1 }
+            if sample.name == "ambiguous" {
+                XCTAssertFalse(plan.missingInformation.isEmpty, "Ambiguous work should keep its checklist gaps open instead of fabricating a plan.")
+            }
             print("Prompt baseline [\(sample.name)]: \(Duration.seconds(from: elapsed))s; retained=\(keptTerms); tasks=\(plan.tasks.count); refs=\(plan.codeReferences.count); outputChars=\(plan.optimizedPrompt.count)")
         }
 

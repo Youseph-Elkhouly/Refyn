@@ -155,11 +155,7 @@ struct LocalLLMProvider: LLMProvider, @unchecked Sendable {
 
     func plan(for request: OptimizationRequest) async throws -> ModelPlan {
         let output = try await manager.generate(request.modelPrompt)
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let json: String
-        if let start = trimmed.firstIndex(of: "{"), let end = trimmed.lastIndex(of: "}") {
-            json = String(trimmed[start...end])
-        } else {
+        guard let json = ModelOutput.jsonObject(from: output) else {
             throw LLMError.invalidResponse("No JSON object was returned.")
         }
         do {

@@ -35,7 +35,7 @@ public struct PromptOptimizer: Sendable {
     public init(provider: (any LLMProvider)?) { self.provider = provider }
 
     public func cacheKey(for input: Input) -> String {
-        let analysis = RequestAnalysis(input.text, confirmedRequirements: input.userAnswers.map { "\($0.question) \($0.answer)" })
+        let analysis = RequestAnalysis(input.text, confirmedRequirements: input.userAnswers.map(\.answer))
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         let parts = [analysis.text, input.mode.rawValue, input.customTechniques.map(\.rawValue).sorted().joined(separator: ","), context.hash,
                      input.userAnswers.map { "\($0.id):\($0.answer)" }.joined(separator: "\n"), input.unansweredQuestions.joined(separator: "\n"),
@@ -45,29 +45,77 @@ public struct PromptOptimizer: Sendable {
 
     public func optimize(_ input: Input) async throws -> PromptPlan {
         // 1–2: intent and task type.
-        let analysis = RequestAnalysis(input.text, confirmedRequirements: input.userAnswers.map { "\($0.question) \($0.answer)" })
+        let analysis = RequestAnalysis(input.text, confirmedRequirements: input.userAnswers.map(\.answer))
         guard !analysis.text.isEmpty else { throw PromptError.emptyInput }
         // 3: context, bounded and never whole files.
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
+        let answeredGapIDs = Set(input.userAnswers.map(\.id))
+        let pendingGaps = analysis.gaps(context: context).filter { !answeredGapIDs.contains($0.id) }
+        // Turning the question step off is equivalent to skipping it: preserve the gaps in the
+        // prompt and tell the model to keep them open rather than silently guessing.
+        let unansweredQuestions = Self.dedupe(input.unansweredQuestions + pendingGaps.map(\.question))
         // 4: techniques.
-        let techniques = registry.select(mode: input.mode, analysis: analysis, custom: input.customTechniques, hasContext: !context.isEmpty)
+        var techniques = registry.select(mode: input.mode, analysis: analysis, custom: input.customTechniques, hasContext: !context.isEmpty)
         let iterationLimit = techniques.contains(.boundedIteration) ? max(1, min(10, input.iterationLimit)) : 0
 
         // 5–7: model call when available, local rules otherwise.
         var notices: [String] = []
         var modelPlan: ModelPlan?
         var providerID = "local"
-        let directRewrite = techniques.contains(.zeroShot) && techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
+        // A short prompt can still be an underspecified feature or bug fix. The app's
+        // clarification step runs before this pipeline; after answers (or an explicit skip),
+        // do not bypass the model and return the original sentence as a "Local rules" result.
+        let needsEngineering = !pendingGaps.isEmpty || !input.userAnswers.isEmpty || !unansweredQuestions.isEmpty
+        if input.mode != .custom && needsEngineering && techniques.allSatisfy({ [.zeroShot, .contextInjection, .constraints].contains($0) }) {
+            techniques = PromptTechnique.allCases.filter { [.structured, .constraints, .acceptanceCriteria].contains($0) || ($0 == .contextInjection && !context.isEmpty) }
+        }
+        let directRewrite = !needsEngineering && techniques.contains(.zeroShot) && techniques.allSatisfy { [.zeroShot, .contextInjection, .constraints].contains($0) }
         if let provider {
             if !directRewrite {
-                let raw = try await provider.plan(for: OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context, iterationLimit: iterationLimit, userAnswers: input.userAnswers))
+                let request = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
+                                                 iterationLimit: iterationLimit, userAnswers: input.userAnswers,
+                                                 unansweredQuestions: unansweredQuestions)
                 do {
+                    let raw = try await provider.plan(for: request)
                     let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
-                    modelPlan = valid
-                    providerID = provider.identifier
-                    if !dropped.isEmpty { notices.append("Removed \(dropped.count) file reference(s) the analyzer could not confirm: \(dropped.prefix(3).joined(separator: ", "))") }
+                    let first = InventionGuard.apply(to: valid, analysis: analysis, context: context, allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
+                    if first.hasViolations || !dropped.isEmpty {
+                        // One bounded correction attempt: local generation is expensive, so never loop.
+                        let issues = (first.unverified + first.demoted + dropped).prefix(12).joined(separator: "; ")
+                        let correction = "The previous draft introduced unsupported specifics: \(issues). Regenerate the JSON plan using only details found in the user request, user answers, or retrieved workspace context. Remove unsupported details from actionable fields; do not guess."
+                        let retryRequest = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
+                                                               iterationLimit: iterationLimit, userAnswers: input.userAnswers,
+                                                               unansweredQuestions: unansweredQuestions, correctiveInstruction: correction)
+                        do {
+                            let retryRaw = try await provider.plan(for: retryRequest)
+                            let (retryValid, retryDropped) = try retryRaw.validated(knownPaths: context.knownPaths)
+                            let retry = InventionGuard.apply(to: retryValid, analysis: analysis, context: context,
+                                                            allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
+                            if retry.hasViolations || !retryDropped.isEmpty {
+                                notices += retry.notices
+                                if !retryDropped.isEmpty { notices.append("Removed unverified file references: \(retryDropped.prefix(3).joined(separator: ", ")).") }
+                                notices.append("The model repeated unsupported details after one correction attempt; used the deterministic prompt builder.")
+                            } else {
+                                modelPlan = retry.plan
+                                providerID = provider.identifier
+                            }
+                        } catch let error as LLMError where error == .cancelled {
+                            throw error
+                        } catch {
+                            notices.append("The corrective generation did not complete; used the deterministic prompt builder. \(error.localizedDescription)")
+                        }
+                    } else {
+                        modelPlan = first.plan
+                        providerID = provider.identifier
+                    }
                 } catch let error as ModelPlan.ValidationError {
                     notices.append("The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
+                } catch let error as LLMError {
+                    if case .invalidResponse = error {
+                        notices.append("The local model returned malformed output; used the deterministic local prompt builder instead.")
+                    } else {
+                        throw error
+                    }
                 }
             }
         } else {
@@ -81,7 +129,7 @@ public struct PromptOptimizer: Sendable {
         plan.iterationLimit = iterationLimit
         plan.provider = providerID
         plan.cacheKey = cacheKey(for: input)
-        plan.missingInformation = Self.dedupe(plan.missingInformation + input.unansweredQuestions)
+        plan.missingInformation = Self.dedupe(plan.missingInformation + unansweredQuestions)
 
         // 8: construction.
         let modelRole = modelPlan?.role.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,17 +164,38 @@ public struct PromptOptimizer: Sendable {
         let componentIDs = Set(context.components.map(\.id))
         let confirmed = m.confirmedRequirements
         let taskText = m.tasks.map { "\($0.title) \($0.detail)" }
+        let userConfirmed = dedupe(analysis.confirmedRequirements)
+        let userStatements = analysis.constraints + userConfirmed + [analysis.text]
+        func grounded(_ candidate: String) -> Bool {
+            userStatements.contains { source in
+                source.localizedCaseInsensitiveContains(candidate) || semanticallySimilar(candidate, source)
+                    || groundedWordCoverage(candidate, source) >= 0.55
+            }
+        }
+        let groundedModelConstraints = m.constraints.filter { candidate in
+            grounded(candidate)
+        }
+        let optionalModelConstraints = m.constraints.filter { !groundedModelConstraints.contains($0) }
+        let additionalConfirmed = m.confirmedRequirements.filter { candidate in
+            grounded(candidate) && !userConfirmed.contains { supplied in
+                supplied.localizedCaseInsensitiveContains(candidate) || semanticallySimilar(candidate, supplied)
+            }
+        }
+        let optionalModelRequirements = m.confirmedRequirements.filter { !grounded($0) }
+        let groundedCriteria = m.successCriteria.filter(grounded)
+        let optionalModelCriteria = m.successCriteria.filter { !grounded($0) }
         return PromptPlan(
             originalPrompt: analysis.text,
             intent: m.intent,
             taskType: TaskType(rawValue: m.taskType) ?? analysis.taskType,
             codeReferences: m.codeReferences.map { CodeReference(path: $0.path, symbol: $0.symbol?.nilIfEmpty, reason: $0.reason, source: .model) },
             tasks: m.tasks.map { PlanTask(id: $0.id, title: $0.title, detail: $0.detail, dependsOn: $0.dependsOn) },
-            constraints: nonRedundant(dedupe(analysis.constraints + m.constraints), against: confirmed),
-            successCriteria: m.successCriteria,
+            constraints: nonRedundant(dedupe(analysis.constraints + groundedModelConstraints), against: confirmed),
+            successCriteria: groundedCriteria,
             missingInformation: m.missingInformation,
-            confirmedRequirements: dedupe(analysis.confirmedRequirements + m.confirmedRequirements),
-            suggestedDecisions: nonRedundant(m.suggestedDecisions, against: confirmed + taskText),
+            confirmedRequirements: dedupe(userConfirmed + additionalConfirmed),
+            suggestedDecisions: nonRedundant(m.suggestedDecisions + optionalModelConstraints + optionalModelRequirements + optionalModelCriteria,
+                                             against: confirmed + taskText + analysis.constraints),
             plannedComponents: (m.plannedComponents ?? []).enumerated().map { i, p in
                 PlannedComponent(id: "p\(i + 1)", name: p.name, type: ComponentType(rawValue: p.type) ?? .library, connectsTo: p.connectsTo.filter(componentIDs.contains))
             },
@@ -155,7 +224,7 @@ public struct PromptOptimizer: Sendable {
     static func localPlan(analysis: RequestAnalysis, context: RetrievedContext) -> PromptPlan {
         if analysis.complexity < 2 {
             return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType,
-                              constraints: analysis.constraints, confirmedRequirements: dedupe(analysis.confirmedRequirements + [analysis.intent]))
+                              constraints: analysis.constraints, confirmedRequirements: dedupe(analysis.confirmedRequirements))
         }
         let refs = context.components.prefix(5).map { CodeReference(path: $0.path, symbol: nil, reason: "\($0.type) module matching the request", source: .graph) }
         let tasks: [PlanTask]
@@ -183,7 +252,7 @@ public struct PromptOptimizer: Sendable {
         default: ["The requested behavior works as described.", "Existing tests and the build pass."]
         }
         return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType, codeReferences: refs, tasks: tasks,
-                          constraints: analysis.constraints, successCriteria: criteria, confirmedRequirements: dedupe(analysis.confirmedRequirements + [analysis.intent]),
+                          constraints: analysis.constraints, successCriteria: criteria, confirmedRequirements: dedupe(analysis.confirmedRequirements),
                           verificationInstructions: ["Run the existing tests for the affected code.", "Run the build or type checker."])
     }
 
@@ -199,17 +268,27 @@ public struct PromptOptimizer: Sendable {
     }
 
     static func semanticallySimilar(_ lhs: String, _ rhs: String) -> Bool {
-        func words(_ value: String) -> Set<String> {
-            let ignored: Set<String> = ["a", "an", "the", "to", "of", "for", "and", "or", "do", "does", "not", "no", "is", "are", "be", "with", "during", "up", "on", "in"]
-            return Set(value.lowercased().split { !$0.isLetter && !$0.isNumber }.map { raw in
-                var word = String(raw)
-                if word.hasSuffix("ies"), word.count > 4 { word = String(word.dropLast(3)) + "y" }
-                else if word.hasSuffix("s"), word.count > 3 { word.removeLast() }
-                return word
-            }.filter { !ignored.contains($0) })
-        }
+        let ignored: Set<String> = ["a", "an", "the", "to", "of", "for", "and", "or", "do", "does", "not", "no", "is", "are", "be", "with", "during", "up", "on", "in"]
+        func words(_ value: String) -> Set<String> { normalizedWords(value).subtracting(ignored) }
         let a = words(lhs), b = words(rhs)
         guard !a.isEmpty, !b.isEmpty else { return false }
         return Double(a.intersection(b).count) / Double(a.union(b).count) >= 0.66
+    }
+
+    static func groundedWordCoverage(_ candidate: String, _ source: String) -> Double {
+        let ignored: Set<String> = ["a", "an", "the", "to", "of", "for", "and", "or", "do", "does", "not", "no", "is", "are", "be", "with", "during", "up", "on", "in"]
+        let requested = normalizedWords(candidate).subtracting(ignored)
+        guard !requested.isEmpty else { return 0 }
+        return Double(requested.intersection(normalizedWords(source)).count) / Double(requested.count)
+    }
+
+    static func normalizedWords(_ value: String) -> Set<String> {
+        Set(value.lowercased().split { !$0.isLetter && !$0.isNumber }.map { raw in
+            var word = String(raw)
+            if ["paginate", "pagination", "paginated", "paginating"].contains(word) { word = "paginate" }
+            else if word.hasSuffix("ies"), word.count > 4 { word = String(word.dropLast(3)) + "y" }
+            else if word.hasSuffix("s"), word.count > 3 { word.removeLast() }
+            return word
+        })
     }
 }

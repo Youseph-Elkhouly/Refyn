@@ -48,7 +48,8 @@ public enum RequirementChecklist {
     }
 
     private static func isSimpleRename(_ text: String) -> Bool {
-        text.range(of: #"^\s*(rename|change|replace)\b.{1,70}\bto\b.{1,50}$"#, options: [.regularExpression, .caseInsensitive]) != nil
+        text.range(of: #"^\s*rename\b.{1,100}$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            || text.range(of: #"^\s*(change|replace)\b.{1,70}\bto\b.{1,50}$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func items(for type: TaskType) -> [Item] {
@@ -129,7 +130,7 @@ public enum RequirementChecklist {
         case .metric: return contains(["latency", "throughput", "memory", "cpu", "fps", "p95", "p99", "requests per", "time to", "metric"])
         case .target: return contains(["target", "under ", "below ", "less than", "at most", "no more than", "by ", "%", "ms", "seconds", "twice", "double"])
         case .behaviorPreservation: return contains(["behavior unchanged", "behaviour unchanged", "same behavior", "same behaviour", "no behavior change", "without changing behavior", "without changing behaviour", "preserve behavior", "preserve behaviour"])
-        case .testScenarios: return contains(["test ", "tests ", "scenario", "case", "when ", "given "])
+        case .testScenarios: return contains(["scenario", "test case", "test cases", "when ", "given ", "for example", "for instance"])
         case .testOutcomes: return contains(["expect", "assert", "should ", "returns ", "contains ", "equals", "fails", "passes", "expected result"])
         case .uiStates: return contains(["empty state", "loading", "error state", "success state", "empty,", "loading,", "error,", "all states"])
         case .platform:

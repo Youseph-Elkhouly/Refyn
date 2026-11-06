@@ -14,7 +14,8 @@ public enum PromptComposer {
         let t = Set(plan.selectedTechniques)
         var s: [String] = []
 
-        if t.contains(.zeroShot) && t.isSubset(of: [.zeroShot, .contextInjection, .constraints]) {
+        if t.contains(.zeroShot) && t.isSubset(of: [.zeroShot, .contextInjection, .constraints])
+            && plan.confirmedRequirements.isEmpty && plan.missingInformation.isEmpty {
             // Zero-shot: one clear instruction, nothing else unless constraints or context matter.
             var text = parts.objective
             if t.contains(.constraints), !plan.constraints.isEmpty { text += "\n\nConstraints: " + plan.constraints.joined(separator: " ") }
@@ -25,8 +26,10 @@ public enum PromptComposer {
         if t.contains(.role) { s.append(parts.role) }
         s.append(section("Objective", parts.objective))
         if t.contains(.contextInjection), let ctx = contextSection(plan, parts.context, compact: false) { s.append(ctx) }
+        if !plan.confirmedRequirements.isEmpty {
+            s.append(section("Requirements (stated by the user)", bullets(plan.confirmedRequirements)))
+        }
         if t.contains(.structured) || t.contains(.multiStage) {
-            if !plan.confirmedRequirements.isEmpty { s.append(section("Requirements (stated by the user)", bullets(plan.confirmedRequirements))) }
             if !plan.suggestedDecisions.isEmpty { s.append(section("Suggested approach (adjust if the code shows a better fit)", bullets(plan.suggestedDecisions))) }
         }
         if t.contains(.constraints), !plan.constraints.isEmpty { s.append(section("Constraints", bullets(plan.constraints))) }
@@ -95,7 +98,10 @@ public enum PromptComposer {
             parts2.append(section("This step", taskList(tasks, withDependencies: false)))
             if !plan.constraints.isEmpty { parts2.append(section("Constraints", bullets(plan.constraints))) }
             if index == groups.count - 1 {
-                if !plan.successCriteria.isEmpty { parts2.append(section("Acceptance criteria", checklist(plan.successCriteria))) }
+                let criteria = plan.successCriteria.isEmpty
+                    ? "Verify only outcomes explicitly stated in the original request."
+                    : checklist(plan.successCriteria)
+                parts2.append(section("Acceptance criteria", criteria))
                 if !plan.verificationInstructions.isEmpty { parts2.append(section("Verification", bullets(plan.verificationInstructions))) }
             } else {
                 parts2.append("Stop after this step and report the files changed and checks run.")

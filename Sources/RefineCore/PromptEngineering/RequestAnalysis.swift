@@ -71,7 +71,7 @@ public struct RequestAnalysis: Sendable, Hashable {
         if ["write tests", "add tests", "unit test", "test coverage", "integration test", "increase coverage"].contains(where: opening.contains) { return .test }
         let rules: [(TaskType, [String])] = [
             (.bugfix, ["fix", "bug", "broken", "crash", "error", "fails", "failing", "regression", "doesn't work", "not working", "issue"]),
-            (.performance, ["slow", "performance", "optimize", "speed up", "latency", "memory usage", "faster"]),
+            (.performance, ["slow", "performance", "optimize", "speed up", "speed", "latency", "memory usage", "faster"]),
             (.refactor, ["refactor", "clean up", "cleanup", "restructure", "rename", "extract", "simplify", "reorganize", "migrate"]),
             (.ui, ["ui", "button", "layout", "css", "style", "screen", "view", "modal", "design", "animation", "dark mode"]),
             (.docs, ["document", "readme", "docs", "comment"]),
@@ -87,6 +87,7 @@ public struct RequestAnalysis: Sendable, Hashable {
     static func keyTerms(_ text: String) -> [String] {
         var terms: [String] = []
         let patterns = [
+            "https?://[^\\s\\\"'<>]+",                         // URLs
             "`([^`]+)`", "\"([^\"]{2,60})\"", "'([^'\\s]{2,60})'",
             "\\b([\\w./-]+\\.[a-zA-Z]{1,5})\\b",                 // file names
             "\\b([a-z]+[A-Z][A-Za-z0-9]*)\\b",                 // camelCase
@@ -98,11 +99,17 @@ public struct RequestAnalysis: Sendable, Hashable {
         for p in patterns {
             guard let re = try? NSRegularExpression(pattern: p) else { continue }
             for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-                if let r = Range(m.range(at: 1), in: text) { terms.append(String(text[r])) }
+                let capture = p.hasPrefix("https?") ? 0 : 1
+                if let r = Range(m.range(at: capture), in: text) { terms.append(String(text[r])) }
             }
         }
+        let knownLibraries = ["Alamofire", "AFNetworking", "Apollo", "Axios", "Angular", "Django", "Express", "FastAPI", "Flask", "Flutter", "Firebase", "GraphQL", "Hibernate", "Ktor", "Laravel", "Mongoose", "MongoDB", "MySQL", "Next.js", "PostgreSQL", "Postgres", "Prisma", "React", "React Native", "Redis", "Ruby on Rails", "SQLAlchemy", "SQLite", "Spring Boot", "Supabase", "Svelte", "TanStack Query", "TypeORM", "UIKit", "SwiftUI", "Vue", "Vapor", "Kubernetes", "Terraform"]
+        for library in knownLibraries {
+            let pattern = "(?i)(?<![A-Za-z0-9])" + NSRegularExpression.escapedPattern(for: library) + "(?![A-Za-z0-9])"
+            if text.range(of: pattern, options: .regularExpression) != nil { terms.append(library) }
+        }
         var seen = Set<String>()
-        return terms.filter { $0.count > 1 && seen.insert($0.lowercased()).inserted }
+        return terms.filter { ($0.count > 1 || $0.allSatisfy(\.isNumber)) && seen.insert($0.lowercased()).inserted }
     }
 
     /// Terms from the original request that are absent from `prompt`.

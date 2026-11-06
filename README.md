@@ -30,9 +30,22 @@ The Qwen integration test downloads the model once and runs real on-device gener
 - Run swift test; the integration test skips unless opted in.
 - Run Scripts/build-mlx-metallib.sh to compile and stage MLX Metal kernels.
 - Run REFINE_RUN_LOCAL_MODEL_INTEGRATION=1 swift test --filter LocalInferenceTests/testDownloadAndRunModelThenRunOffline.
-- Run REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testPromptEngineeringBaselineEvaluation for the seven-case quality baseline.
+- Run REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testPromptEngineeringBaselineEvaluation for the original eight-case quality baseline.
+- Run REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testClarificationQualityEvaluationEightUnderspecifiedAndTwoClearRequests for the clarification and unsupported-specifics evaluation.
 
-The checked-in baseline covers rough features, ambiguity, a complex feature, bug fixing, refactoring, a short rename, and a verification workflow. On the current Apple Silicon machine, all seven retained their required request terms, no unverified code references survived, the short request stayed at 23 characters, and all four cases marked for structured work produced tasks and verification. The four model-backed cases averaged about 14.9 seconds. This baseline does not justify fine-tuning; the short Auto/Basic path correctly skips model loading and stays deterministic.
+The original baseline covers rough features, ambiguity, a complex feature, bug fixing, refactoring, a short rename, a verification workflow, and image-upload retries. In the current Apple Silicon run, all eight retained their required request terms, no unverified code references survived, the short request stayed at 23 characters, and all four sufficiently specified cases marked for structured work produced tasks and verification. The seven model-backed cases averaged 12.1 seconds; the clear rename completed deterministically in under 0.01 seconds. The vague authentication request kept its questions open and did not receive an invented task plan.
+
+Clarification baseline, measured on eight underspecified requests (bug fix, feature, performance, refactor, tests, UI, docs, configuration) plus two clear controls:
+
+| Measure | Before checklist | After checklist and guard |
+|---|---:|---:|
+| Expected gaps detected | 0/8 | 8/8 |
+| Unsupported concrete specifics surviving | Not measured in the earlier run | 0/8 |
+| Original request specifics preserved | Not measured in the earlier run | 8/8 |
+| Clear controls without questions | 2/2 | 2/2 |
+| Mean local generation latency | ~9.8s across the earlier 10-case run | 6.52s across the eight underspecified cases |
+
+The before figures came from an earlier 10-case run and are not a paired replay of this exact dataset. The after check uses the local model with gaps passed as unanswered checklist questions; its deterministic guard checks names, paths, URLs, quoted text, library names, and numbers. It does not establish that every ungrounded natural-language suggestion is absent. The 8/8 measured results do not justify fine-tuning.
 
 Existing Refine data moves to the Refyn Application Support folder on first launch; the database, speech models, workspace data, and downloaded Qwen model are preserved. First launch: the notch appears as a small pill, or at the top center on a display without a notch. Choose Settings › Model › Download model, then optimize prompts. A workspace is optional. Add one from the workspace menu to include relevant project context. Download a speech model in Settings › Voice to dictate (hold Control-Option-D).
 
@@ -45,9 +58,11 @@ Existing Refine data moves to the Refyn Application Support folder on first laun
 
 The model layer is modular behind LLMProvider. Qwen3 returns a structured plan, and Refyn validates tasks and dependencies, drops code references that cannot be confirmed in the selected workspace, then composes the final prompt locally. Invalid model output uses the deterministic local builder with a visible notice; model load/runtime failures are shown as errors. Matching prior results are cached.
 
+Before generating a prompt, Refyn checks the request against a small task-specific checklist. When information is missing, it asks up to three inline questions before inference. Continue folds answers in as user-confirmed requirements; Skip keeps unanswered items in the generated prompt as open questions. Settings › Prompts can turn this step off. Skipped questions are also supplied to the local model, so it is told to preserve the gaps rather than fill them by guessing. Malformed or unsupported model output falls back to the deterministic composer, with a visible notice; unsupported specifics get at most one corrective generation attempt.
+
 Prompt modes:
 
-- Auto chooses a concise direct rewrite for simple prompts and more techniques as complexity rises.
+- Auto keeps clear, simple requests concise; underspecified task requests still go through the checklist and local optimization path.
 - Basic improves clarity and constraints without unnecessary expansion.
 - Advanced adds ordered implementation stages, dependencies, acceptance criteria, verification, and a bounded retry workflow.
 - Custom applies only the techniques selected in the editor.
