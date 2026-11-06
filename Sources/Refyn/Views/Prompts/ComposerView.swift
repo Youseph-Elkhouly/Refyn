@@ -101,7 +101,7 @@ struct ComposerView: View {
                 .help(modeHelp)
 
             if model.mode == .custom {
-                IconButton(symbol: "slider.horizontal.3", help: "Choose techniques", active: showTechniques) { showTechniques.toggle() }
+                IconButton(symbol: "slider.horizontal.3", help: "Customize how Refyn improves your prompt", active: showTechniques) { showTechniques.toggle() }
                     .popover(isPresented: $showTechniques, arrowEdge: .bottom) { techniquePicker }
             }
 
@@ -125,29 +125,42 @@ struct ComposerView: View {
 
     var modeHelp: String {
         switch model.mode {
-        case .auto: "Chooses techniques from the request's complexity."
-        case .basic: "Clarifies without expanding."
-        case .advanced: "Planning, constraints, dependencies and verification."
-        case .custom: "Pick techniques yourself."
+        case .auto: "Refyn chooses how much detail your request needs."
+        case .basic: "Make your request clearer and keep it concise."
+        case .advanced: "Add steps, requirements, and checks for larger tasks."
+        case .custom: "Choose what Refyn adds to your prompt."
         }
     }
 
     var techniquePicker: some View {
         let columns = [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
-        return ScrollView {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Space.sm) {
-                ForEach(PromptTechnique.allCases) { t in
-                    Toggle(isOn: Binding(get: { model.customTechniques.contains(t) },
-                                         set: { on in if on { model.customTechniques.insert(t) } else { model.customTechniques.remove(t) } })) {
-                        Text(t.rawValue).font(Theme.caption)
-                    }
-                    .toggleStyle(.checkbox)
-                    .help(t.summary)
-                }
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                SectionHeader(title: "Choose what Refyn adds")
+                Text("Pick any options that help. Leave them off to keep your prompt simple.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            .padding(Theme.Space.lg)
+            ScrollView {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Space.sm) {
+                    ForEach(PromptTechnique.allCases) { t in
+                        Toggle(isOn: Binding(get: { model.customTechniques.contains(t) },
+                                             set: { on in if on { model.customTechniques.insert(t) } else { model.customTechniques.remove(t) } })) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(t.displayTitle).font(Theme.body).foregroundStyle(Theme.text)
+                                Text(t.userDescription).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .toggleStyle(.checkbox)
+                        .help(t.userDescription)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
         }
-        .frame(width: 360, height: 280)
+        .padding(Theme.Space.lg)
+        .frame(width: 560, height: 440)
     }
 
     var footer: some View {

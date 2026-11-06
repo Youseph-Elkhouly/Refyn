@@ -34,6 +34,52 @@ public enum PromptTechnique: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var id: String { rawValue }
 
+    /// Plain-language names used in the Custom mode picker.
+    public var displayTitle: String {
+        switch self {
+        case .zeroShot: "Keep it simple"
+        case .role: "Set a role"
+        case .contextInjection: "Use project details"
+        case .structured: "Organize the request"
+        case .outputFormat: "Choose a response format"
+        case .constraints: "Protect what should stay the same"
+        case .fewShot: "Show an example"
+        case .decomposition: "Break the work into steps"
+        case .promptChaining: "Split work into separate prompts"
+        case .selfCritique: "Review before finishing"
+        case .boundedIteration: "Allow a few fix-and-check rounds"
+        case .conditionalBranching: "Add if/then guidance"
+        case .verification: "Ask it to run checks"
+        case .toolUse: "Guide how it uses tools"
+        case .multiStage: "Use inspect, change, and check stages"
+        case .dependencyPlanning: "Put tasks in the right order"
+        case .acceptanceCriteria: "Define when the work is done"
+        }
+    }
+
+    /// Short explanation shown beside the plain-language name in Custom mode.
+    public var userDescription: String {
+        switch self {
+        case .zeroShot: "Use a direct instruction without extra structure."
+        case .role: "Give the coding assistant a useful point of view."
+        case .contextInjection: "Include relevant files, frameworks, and workspace notes."
+        case .structured: "Separate the goal, requirements, and suggestions."
+        case .outputFormat: "Ask for a clear report of the result."
+        case .constraints: "Call out what must not change."
+        case .fewShot: "Show the kind of result you want."
+        case .decomposition: "Turn a large request into manageable actions."
+        case .promptChaining: "Create smaller prompts to run one after another."
+        case .selfCritique: "Have the assistant review its changes before it finishes."
+        case .boundedIteration: "Let it test and fix problems for a limited number of rounds."
+        case .conditionalBranching: "Say what to do when something differs from expectations."
+        case .verification: "Include specific checks for the assistant to run."
+        case .toolUse: "Give tool-using assistants a clear search, edit, and check process."
+        case .multiStage: "Work through inspect, change, and verify stages."
+        case .dependencyPlanning: "Do prerequisite work before dependent tasks."
+        case .acceptanceCriteria: "List observable signs that the request is complete."
+        }
+    }
+
     public var isAdvanced: Bool {
         switch self {
         case .zeroShot, .role, .contextInjection, .structured, .outputFormat, .constraints, .fewShot: false
