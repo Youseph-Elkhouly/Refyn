@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupHotKeys()
         observeVoice()
         Task { await model.load() }
+        Task { await model.localModel.warmUp() }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -90,4 +90,12 @@ final class InventionGuardTests: XCTestCase {
         XCTAssertNil(ModelOutput.jsonObject(from: "<think>never closed {\"a\":1}"))
         XCTAssertNil(ModelOutput.jsonObject(from: "no json"))
     }
+
+    func testEndDetectorStopsAtFirstClosedObjectAcrossChunks() {
+        var detector = JSONObjectEndDetector()
+        XCTAssertFalse(detector.feed("<think>\n{ not json }\n"))
+        XCTAssertFalse(detector.feed("</think>\n{\"a\":\"x}\\\"}\","))
+        XCTAssertFalse(detector.feed("\"b\":{\"c\":[1,2]"))
+        XCTAssertTrue(detector.feed("}}"))
+    }
 }

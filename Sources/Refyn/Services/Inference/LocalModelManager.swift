@@ -33,6 +33,7 @@ final class LocalModelManager {
     private(set) var downloadProgress: Double?
     private var container: ModelContainer?
     private var operationTask: Task<Void, Never>?
+    private var loadTask: Task<ModelContainer, Error>?
     private var generationTask: Task<String, Error>?
 
     private var modelCacheBase: URL {
@@ -92,14 +93,29 @@ final class LocalModelManager {
         generationTask?.cancel()
     }
 
+    /// Loads an installed model into memory ahead of the first request so it does not pay the load cost.
+    func warmUp() async {
+        guard container == nil, isInstalled, operationTask == nil else { return }
+        _ = try? await ensureLoaded()
+        if container != nil, state == .notInstalled { state = .ready }
+    }
+
+    private func ensureLoaded() async throws {
+        if container != nil { return }
+        if let loadTask { container = try await loadTask.value; return }
+        let hub = HubApi(downloadBase: modelCacheBase, useOfflineMode: true)
+        let task = Task<ModelContainer, Error> {
+            try await LLMModelFactory.shared.loadContainer(hub: hub, configuration: ModelConfiguration(id: Self.modelID))
+        }
+        loadTask = task
+        defer { loadTask = nil }
+        container = try await task.value
+    }
+
     func generate(_ prompt: String) async throws -> String {
         if container == nil, isInstalled {
             do {
-                let hub = HubApi(downloadBase: modelCacheBase, useOfflineMode: true)
-                container = try await LLMModelFactory.shared.loadContainer(
-                    hub: hub,
-                    configuration: ModelConfiguration(id: Self.modelID)
-                )
+                try await ensureLoaded()
             } catch {
                 let message = "Saved model could not be loaded offline. Verify this Mac has enough unified memory (allow about 8 GB free) and download the model again. \(error.localizedDescription)"
                 state = .failed(message)
@@ -113,9 +129,11 @@ final class LocalModelManager {
             let session = ChatSession(container, generateParameters: GenerateParameters(maxTokens: 1150, maxKVSize: 4096, temperature: 0.2, topP: 0.9))
             let task = Task<String, Error> {
                 var result = ""
+                var detector = JSONObjectEndDetector()
                 for try await chunk in session.streamResponse(to: prompt) {
                     try Task.checkCancellation()
                     result += chunk
+                    if detector.feed(chunk) { break }
                 }
                 return result
             }
