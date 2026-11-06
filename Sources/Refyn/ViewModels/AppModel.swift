@@ -6,7 +6,7 @@ import RefineCore
 @Observable
 @MainActor
 final class AppModel {
-    enum Route: Equatable { case compose, result, notes, saved }
+    enum Route: Equatable { case compose, result, history, notes, saved }
     enum AnalysisState: Equatable { case idle, running, failed(String) }
     struct Banner: Equatable { enum Kind { case info, warning, error }; var text: String; var kind: Kind }
     struct ClarificationState {
@@ -28,6 +28,7 @@ final class AppModel {
     private(set) var current: Workspace?
     private(set) var notes: [Note] = []
     private(set) var savedPrompts: [SavedPrompt] = []
+    private(set) var promptHistory: [PromptPlan] = []
     private(set) var workspaceGraph: CodebaseGraph?
     private(set) var analysis: AnalysisState = .idle
 
@@ -62,6 +63,7 @@ final class AppModel {
 
     func load() async {
         await reloadWorkspaces()
+        await reloadPromptHistory()
         let preferred = workspaces.first { $0.id == Preferences.lastWorkspaceID } ?? workspaces.first
         if let preferred { await select(preferred, scanIfNeeded: true) }
     }
@@ -188,6 +190,24 @@ final class AppModel {
         return (try? await store.savedPrompts(workspaceID: ws.id, matching: query)) ?? []
     }
 
+    func reloadPromptHistory(matching query: String = "") async {
+        do { promptHistory = try await store.recentPlans(matching: query) }
+        catch { show("Could not load prompt history: \(error.localizedDescription)", .error) }
+    }
+
+    func openHistoryResult(_ previous: PromptPlan) {
+        input = previous.originalPrompt
+        plan = previous
+        route = .result
+    }
+
+    func reuseHistoryRequest(_ previous: PromptPlan) {
+        input = previous.originalPrompt
+        plan = nil
+        clarification = nil
+        route = .compose
+    }
+
     func reuse(_ saved: SavedPrompt) {
         input = saved.prompt
         plan = nil
@@ -277,6 +297,7 @@ final class AppModel {
                 let result = try await optimizer.optimize(input)
                 try await store.save(result)
                 plan = result
+                await reloadPromptHistory()
                 if let notice = result.notices.first { show(notice, .warning) }
             }
             route = .result

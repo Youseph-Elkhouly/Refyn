@@ -213,6 +213,20 @@ public final class WorkspaceStore: Sendable {
         }
     }
 
+    /// Recent prompt results across all workspaces, including prompts created without a workspace.
+    public func recentPlans(matching query: String = "", limit: Int = 100) async throws -> [PromptPlan] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = "%\(trimmed)%"
+        return try await database.read { db in
+            try Data.fetchAll(db, sql: """
+                SELECT json FROM promptPlans
+                WHERE (? = '' OR CAST(json AS TEXT) LIKE ? COLLATE NOCASE)
+                ORDER BY createdAt DESC LIMIT ?
+                """, arguments: [trimmed, pattern, max(1, min(limit, 500))])
+                .map { try Self.decoder.decode(PromptPlan.self, from: $0) }
+        }
+    }
+
     private static func workspace(_ row: Row) -> Workspace {
         Workspace(id: UUID(uuidString: row["id"]) ?? UUID(), name: row["name"], path: row["path"], bookmark: row["bookmark"],
                   createdAt: Date(timeIntervalSince1970: row["createdAt"]), lastOpenedAt: Date(timeIntervalSince1970: row["lastOpenedAt"]))

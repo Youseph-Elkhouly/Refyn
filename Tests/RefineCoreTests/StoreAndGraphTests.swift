@@ -84,6 +84,23 @@ final class StoreAndGraphTests: XCTestCase {
         XCTAssertEqual(listed.map(\.originalPrompt), ["Fix the parser"])
     }
 
+    func testRecentPromptHistoryIncludesWorkspaceAndStandaloneResultsAndSearchesBothTexts() async throws {
+        let workspace = try await store.addDirectory(dir)
+        let older = PromptPlan(workspaceID: workspace.id, originalPrompt: "Add report export", optimizedPrompt: "Export filtered reports as CSV",
+                               createdAt: Date(timeIntervalSince1970: 100), updatedAt: Date(timeIntervalSince1970: 100))
+        let newer = PromptPlan(originalPrompt: "Fix login timeout", optimizedPrompt: "Reproduce and fix the login timeout", createdAt: Date(timeIntervalSince1970: 200),
+                               updatedAt: Date(timeIntervalSince1970: 200))
+        try await store.save(older)
+        try await store.save(newer)
+
+        let history = try await store.recentPlans()
+        let csvMatches = try await store.recentPlans(matching: "CSV")
+        let loginMatches = try await store.recentPlans(matching: "login timeout")
+        XCTAssertEqual(history.map(\.id), [newer.id, older.id])
+        XCTAssertEqual(csvMatches.map(\.id), [older.id])
+        XCTAssertEqual(loginMatches.map(\.id), [newer.id])
+    }
+
     func testV1DatabaseMigratesNotes() async throws {
         let url = dir.appending(path: "old.sqlite")
         let queue = try DatabaseQueue(path: url.path)

@@ -13,6 +13,7 @@ struct ExpandedPanelView: View {
                 switch model.route {
                 case .compose: ComposerView(model: model)
                 case .result: ResultView(model: model)
+                case .history: PromptHistoryView(model: model)
                 case .notes: NotesView(model: model)
                 case .saved: SavedPromptsView(model: model)
                 }
@@ -48,6 +49,9 @@ struct ExpandedPanelView: View {
                 Image(systemName: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(Theme.textSecondary).help(message)
             }
             Spacer()
+            IconButton(symbol: "clock.arrow.circlepath", help: "Prompt history", active: model.route == .history) {
+                model.route = model.route == .history ? .compose : .history
+            }
             IconButton(symbol: "note.text", help: "Notes", active: model.route == .notes) { model.route = model.route == .notes ? .compose : .notes }
             IconButton(symbol: "bookmark", help: "Saved prompts", active: model.route == .saved) { model.route = model.route == .saved ? .compose : .saved }
             IconButton(symbol: "gearshape", help: "Settings (⌘,)") { AppActions.openSettings() }
