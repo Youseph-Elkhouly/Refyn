@@ -25,7 +25,7 @@ private struct SequencedProvider: LLMProvider {
 
 extension ModelPlan {
     static func sample(paths: [String] = ["src/services"], tasks: [Task]? = nil) -> ModelPlan {
-        ModelPlan(intent: "Add pagination to listUsers", taskType: "feature", role: "You are a senior TypeScript engineer.",
+        ModelPlan(intent: "Add pagination to listUsers", taskType: "feature", role: "You are a senior engineer working on the users service.",
                   objective: "Add cursor pagination to `listUsers` in the users service.",
                   confirmedRequirements: ["Paginate `listUsers` results"], suggestedDecisions: ["Use a cursor on the id column"],
                   constraints: ["Do not change the response shape for existing callers"],
@@ -361,6 +361,19 @@ final class PromptEngineeringTests: XCTestCase {
         let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated))).optimize(.init(text: request, mode: .auto))
         XCTAssertFalse(plan.constraints.contains(request))
         XCTAssertEqual(plan.constraints.count, 2)
+    }
+
+    func testOneSlippedBracketDoesNotDiscardTheGeneration() throws {
+        let missingArrayClose = #"<think></think>{"objective":"Fix it","tasks":[{"id":"t1","title":"Look"}],"verificationSteps":["Run the tests"}"#
+        let json = try XCTUnwrap(ModelOutput.jsonObject(from: missingArrayClose))
+        let plan = try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+        XCTAssertEqual(plan.verificationSteps, ["Run the tests"])
+        XCTAssertEqual(plan.tasks.count, 1)
+        let doubled = #"{"objective":"Fix it","verificationSteps":["Run the tests"}}"#
+        let repaired = try XCTUnwrap(ModelOutput.jsonObject(from: doubled))
+        XCTAssertEqual(try JSONDecoder().decode(ModelPlan.self, from: Data(repaired.utf8)).verificationSteps, ["Run the tests"])
+        let valid = #"{"a":[1,2],"b":{"c":"x]}"}}"#
+        XCTAssertEqual(ModelOutput.jsonObject(from: valid), valid, "valid JSON, including brackets inside strings, is untouched")
     }
 
     func testListFieldsAcceptABareString() throws {

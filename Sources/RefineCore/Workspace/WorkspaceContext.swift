@@ -43,19 +43,35 @@ public enum ContextRetriever {
     public static let maxComponents = 6
     public static let maxNotesCharacters = 1_500
 
-    /// Ranks graph components by overlap with the request's words and identifiers.
+    /// Words that describe the symptom or the phrasing of a request rather than the part of the code it concerns.
+    static let genericWords: Set<String> = ["fail", "fails", "failing", "failed", "sometimes", "error", "errors", "current", "existing", "test", "tests", "case", "cases", "keep",
+                                            "change", "changes", "max", "maximum", "still", "every", "only", "also", "need", "needs", "make", "sure", "thing", "things",
+                                            "issue", "issues", "problem", "bug", "fix", "update", "improve", "code", "file", "files", "feature", "work", "works", "like"]
+
+    /// Selects the workspace knowledge that bears on this request. A component needs real evidence (an identifier from
+    /// the request, a distinctive word in its name or symbols, or two distinct matching words); the stack and notes are
+    /// included only when the request touches them. Unrelated detail would otherwise steer the agent.
     public static func retrieve(for analysis: RequestAnalysis, workspaceName: String, graph: CodebaseGraph?, notes: [Note]) -> RetrievedContext {
-        let words = tokens(analysis.searchText)
+        let words = tokens(analysis.searchText).subtracting(genericWords)
+        let nodes = graph?.nodes ?? []
+        let haystacks = nodes.map { tokens([$0.name, $0.path] + $0.files + $0.symbols.map(\.name) + $0.routes.map(\.path)) }
+        // A word found in many components says nothing about which one matters.
+        var frequency: [String: Int] = [:]
+        for h in haystacks { for w in h { frequency[w, default: 0] += 1 } }
+        let common: Set<String> = nodes.count >= 5 ? Set(frequency.filter { Double($0.value) / Double(nodes.count) > 0.4 }.keys) : []
+        let identifiers = analysis.keyTerms.filter { $0.count >= 3 && !InventionGuard.isValue($0) }
+
         var scored: [(GraphNode, Int)] = []
-        for node in graph?.nodes ?? [] where node.type != .test || analysis.taskType == .test {
-            var score = 0
-            let haystack = tokens([node.name, node.path] + node.files + node.symbols.map(\.name) + node.routes.map(\.path))
-            score += words.intersection(haystack).count * 3
-            for term in analysis.keyTerms where node.files.contains(where: { $0.localizedCaseInsensitiveContains(term) }) || node.symbols.contains(where: { $0.name == term }) { score += 5 }
+        for (node, haystack) in zip(nodes, haystacks) where node.type != .test || analysis.taskType == .test {
+            let matched = words.intersection(haystack).subtracting(common)
+            let named = words.intersection(tokens([node.name] + node.symbols.map(\.name) + node.routes.map(\.path))).subtracting(common)
+            let identified = identifiers.filter { term in node.files.contains { $0.localizedCaseInsensitiveContains(term) } || node.symbols.contains { $0.name == term } }
+            guard !identified.isEmpty || !named.isEmpty || matched.count >= 2 else { continue }
+            var score = matched.count * 3 + named.count * 2 + identified.count * 5
             if analysis.taskType == .ui && node.type == .frontend { score += 1 }
             if analysis.searchText.localizedCaseInsensitiveContains("api") && node.type == .api { score += 1 }
             if ["database", "db", "schema", "model", "table", "migration"].contains(where: words.contains) && node.type == .database { score += 2 }
-            if score > 0 { scored.append((node, score)) }
+            scored.append((node, score))
         }
         let top = scored.sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.id < $1.0.id }.prefix(maxComponents).map(\.0)
         let components = top.map { node in
@@ -66,17 +82,23 @@ public enum ContextRetriever {
                 routes: node.routes.prefix(8).map { "\($0.method) \($0.path)" },
                 connectsTo: graph?.edges.filter { $0.source == node.id }.prefix(6).map { "\($0.relation) \(graph?.node($0.target)?.name ?? $0.target)\($0.verification == .confirmed ? "" : " (\($0.verification.rawValue))")" } ?? [])
         }
+        // Notes: only those that share a distinctive word with the request, or all of them when the request asks for notes.
+        let asksForNotes = analysis.text.range(of: #"\bnotes?\b"#, options: [.regularExpression, .caseInsensitive]) != nil
         var budget = maxNotesCharacters
         var noteTexts: [String] = []
         for note in notes where note.includeInContext && budget > 0 {
+            guard asksForNotes || !tokens("\(note.title) \(note.body)").intersection(words).isEmpty else { continue }
             let text = "\(note.title): \(note.body)".prefix(budget)
             budget -= text.count
             noteTexts.append(String(text))
         }
+        // The stack is context only when the request names it.
+        let search = analysis.searchText
+        func named(_ name: String) -> Bool { search.range(of: "(?i)(?<![A-Za-z0-9])" + NSRegularExpression.escapedPattern(for: name) + "(?![A-Za-z0-9])", options: .regularExpression) != nil }
         return RetrievedContext(
             workspaceName: workspaceName,
-            languages: graph?.metadata.languages.filter(\.analyzed).map(\.name) ?? [],
-            frameworks: graph?.metadata.frameworks.map(\.name) ?? [],
+            languages: (graph?.metadata.languages.filter(\.analyzed).map(\.name) ?? []).filter(named),
+            frameworks: (graph?.metadata.frameworks.map(\.name) ?? []).filter(named),
             components: components, notes: noteTexts, analyzed: graph != nil)
     }
 

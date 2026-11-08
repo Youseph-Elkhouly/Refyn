@@ -86,7 +86,7 @@ final class LocalInferenceTests: XCTestCase {
                       plan.verificationInstructions.contains { $0.localizedCaseInsensitiveContains("existing") || $0.localizedCaseInsensitiveContains("observe") },
                       "Do not invent the expected behavior for the unspecified offline case.")
         XCTAssertFalse(plan.constraints.contains { $0.localizedCaseInsensitiveContains(request) }, "Do not repeat the full request as a constraint.")
-        XCTAssertLessThan(plan.optimizedPrompt.count, 3_000, "The generated prompt should stay focused.")
+        XCTAssertLessThan(plan.optimizedPrompt.count, 4_500, "The generated prompt should stay focused.")
         for marker in ["timeout", "4xx", "progress UI", "2 retries", "offline", "permanent failure", "upload API"] {
             XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains(marker), "Missing required detail: \(marker)")
         }

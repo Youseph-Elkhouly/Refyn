@@ -140,7 +140,7 @@ public enum InventionGuard {
 
     /// A bare number or a number with a unit, as opposed to a name, path or label.
     static func isValue(_ term: String) -> Bool {
-        term.range(of: #"^\d+(?:\.\d+)?(?:ms|s|px|%|mb|gb|kb)?$"#, options: [.regularExpression, .caseInsensitive]) != nil
+        term.range(of: #"^(?:\d+(?:\.\d+)?(?:ms|s|px|%|mb|gb|kb)?|[1-5]xx)$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func isSupported(_ term: String, in sources: String) -> Bool {

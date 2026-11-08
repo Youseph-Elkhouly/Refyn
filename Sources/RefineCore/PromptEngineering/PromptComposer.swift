@@ -33,6 +33,7 @@ public enum PromptComposer {
             if !plan.suggestedDecisions.isEmpty { s.append(section("Suggested approach (adjust if the code shows a better fit)", bullets(plan.suggestedDecisions))) }
         }
         if t.contains(.constraints), !plan.constraints.isEmpty { s.append(section("Constraints", bullets(plan.constraints))) }
+        if let terms = plan.terminology, !terms.isEmpty { s.append(section("Definitions that matter here", bullets(terms))) }
         if let g = plan.guidance {
             s.append(section("Investigate first — \(g.topic)", bullets(g.investigate)))
             s.append(section(g.direction == nil ? "What good looks like (suggested bar, not stated by the user — adapt it to this product)"
@@ -134,15 +135,21 @@ public enum PromptComposer {
         return level
     }
 
+    /// Matched files are leads, not facts: nothing here proves a file implements the request, so say so.
     static func contextSection(_ plan: PromptPlan, _ ctx: RetrievedContext, compact: Bool) -> String? {
-        var lines: [String] = []
-        if !ctx.frameworks.isEmpty { lines.append("Stack: " + ctx.frameworks.joined(separator: ", ")) }
+        var leads: [String] = []
         let refs = plan.codeReferences.prefix(compact ? 4 : 10)
-        for r in refs { lines.append("`\(r.path)`\(r.symbol.map { " (\($0))" } ?? "") — \(r.reason)") }
-        if refs.isEmpty { for c in ctx.components.prefix(compact ? 3 : 6) { lines.append("`\(c.path)` — \(c.type) module\(c.symbols.isEmpty ? "" : ": " + c.symbols.prefix(3).joined(separator: "; "))") } }
-        if !compact { for n in ctx.notes.prefix(3) { lines.append("Project note: \(n)") } }
+        for r in refs { leads.append("`\(r.path)`\(r.symbol.map { " (\($0))" } ?? "") — \(r.reason)") }
+        if refs.isEmpty { for c in ctx.components.prefix(compact ? 3 : 6) { leads.append("`\(c.path)` — \(c.type) module\(c.symbols.isEmpty ? "" : ": " + c.symbols.prefix(3).joined(separator: "; "))") } }
+        var lines: [String] = []
+        if !leads.isEmpty {
+            lines.append("Investigation targets (matched by name only; confirm each one really handles this before editing it, and ignore it if not):")
+            lines += leads.map { "  - \($0)" }
+        }
+        if !ctx.frameworks.isEmpty { lines.append("Stack named in the request: " + ctx.frameworks.joined(separator: ", ")) }
+        if !compact { for n in ctx.notes.prefix(3) { lines.append("Project note related to this request: \(n)") } }
         guard !lines.isEmpty else { return nil }
-        return section("Relevant context", bullets(lines))
+        return section("Relevant context", lines.map { $0.hasPrefix("  - ") ? $0 : "- \($0)" }.joined(separator: "\n"))
     }
 
     static func insertionIndex(_ s: [String]) -> Int {

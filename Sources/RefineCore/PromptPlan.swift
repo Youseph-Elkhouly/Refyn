@@ -179,6 +179,8 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
     public var verificationInstructions: [String]
     /// Suggested depth for a vague request: what to investigate, what good looks like, examples. Never a stated requirement.
     public var guidance: PlaybookGuidance?
+    /// Short explanations of technical distinctions the request depends on (timeout vs HTTP error, retry vs attempt).
+    public var terminology: [String]?
     public var validation: IntentValidation
     /// "local" when built without a model call.
     public var provider: String
@@ -191,7 +193,7 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
                 mode: PromptMode = .auto, intent: String = "", taskType: TaskType = .other, selectedTechniques: [PromptTechnique] = [],
                 codeReferences: [CodeReference] = [], tasks: [PlanTask] = [], constraints: [String] = [], successCriteria: [String] = [],
                 missingInformation: [String] = [], confirmedRequirements: [String] = [], suggestedDecisions: [String] = [],
-                plannedComponents: [PlannedComponent] = [], iterationLimit: Int = 0, verificationInstructions: [String] = [], guidance: PlaybookGuidance? = nil,
+                plannedComponents: [PlannedComponent] = [], iterationLimit: Int = 0, verificationInstructions: [String] = [], guidance: PlaybookGuidance? = nil, terminology: [String]? = nil,
                 validation: IntentValidation = IntentValidation(), provider: String = "local", notices: [String] = [], cacheKey: String = "",
                 createdAt: Date = .now, updatedAt: Date = .now) {
         self.id = id; self.workspaceID = workspaceID; self.originalPrompt = originalPrompt; self.optimizedPrompt = optimizedPrompt
@@ -200,7 +202,7 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
         self.constraints = constraints; self.successCriteria = successCriteria; self.missingInformation = missingInformation
         self.confirmedRequirements = confirmedRequirements; self.suggestedDecisions = suggestedDecisions
         self.plannedComponents = plannedComponents; self.iterationLimit = iterationLimit
-        self.verificationInstructions = verificationInstructions; self.guidance = guidance; self.validation = validation; self.provider = provider
+        self.verificationInstructions = verificationInstructions; self.guidance = guidance; self.terminology = terminology; self.validation = validation; self.provider = provider
         self.notices = notices; self.cacheKey = cacheKey; self.createdAt = createdAt; self.updatedAt = updatedAt
     }
 }

@@ -39,7 +39,7 @@ public struct PromptOptimizer: Sendable {
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         let parts = [analysis.text, input.mode.rawValue, input.customTechniques.map(\.rawValue).sorted().joined(separator: ","), context.hash,
                      input.userAnswers.map { "\($0.id):\($0.answer)" }.joined(separator: "\n"), input.unansweredQuestions.joined(separator: "\n"),
-                     String(input.iterationLimit), provider?.identifier ?? "local", "v3"]
+                     String(input.iterationLimit), provider?.identifier ?? "local", "v4"]
         return SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -90,7 +90,10 @@ public struct PromptOptimizer: Sendable {
                 do {
                     let raw = try await provider.plan(for: request)
                     let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
-                    let first = InventionGuard.apply(to: valid, analysis: analysis, context: context, allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
+                    // Fix contradictions and narrowing first, locally, so they neither trigger a retry nor a fallback.
+                    let (semantic, semanticNotices) = SemanticValidator.correct(valid, analysis: analysis)
+                    notices += semanticNotices
+                    let first = InventionGuard.apply(to: semantic, analysis: analysis, context: context, allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
                     if requestTier != .complex {
                         // Retrying costs a second generation. The guard already repaired the plan, so report instead.
                         modelPlan = first.plan
@@ -107,7 +110,7 @@ public struct PromptOptimizer: Sendable {
                         do {
                             let retryRaw = try await provider.plan(for: retryRequest)
                             let (retryValid, retryDropped) = try retryRaw.validated(knownPaths: context.knownPaths)
-                            let retry = InventionGuard.apply(to: retryValid, analysis: analysis, context: context,
+                            let retry = InventionGuard.apply(to: SemanticValidator.correct(retryValid, analysis: analysis).plan, analysis: analysis, context: context,
                                                             allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
                             if retry.hasViolations || !retryDropped.isEmpty {
                                 notices += retry.notices
@@ -146,6 +149,7 @@ public struct PromptOptimizer: Sendable {
         }
 
         var plan = modelPlan.map { Self.plan(from: $0, analysis: analysis, context: context, unanswered: unansweredQuestions) } ?? Self.localPlan(analysis: analysis, context: context, quick: quick)
+        SemanticValidator.complete(&plan, analysis: analysis, definitions: !quick)
         plan.workspaceID = input.workspace?.id
         plan.mode = input.mode
         plan.selectedTechniques = techniques
@@ -224,7 +228,8 @@ public struct PromptOptimizer: Sendable {
         // When the whole request is one sentence containing a constraint, the analyzer returns that entire sentence. Once the model
         // has split it into atomic constraints, the restated request adds nothing.
         let focusedAnalysisConstraints = analysis.constraints.filter { c in
-            m.constraints.isEmpty || !(groundedWordCoverage(analysis.text, c) >= 0.9 && groundedWordCoverage(c, analysis.text) >= 0.9)
+            m.constraints.isEmpty || !((groundedWordCoverage(analysis.text, c) >= 0.9 && groundedWordCoverage(c, analysis.text) >= 0.9)
+                                       || groundedWordCoverage(c, m.constraints.joined(separator: " ")) >= 0.7)
         }
         let groundedModelConstraints = m.constraints.filter { candidate in
             grounded(candidate)
@@ -262,25 +267,7 @@ public struct PromptOptimizer: Sendable {
             plannedComponents: (m.plannedComponents ?? []).enumerated().map { i, p in
                 PlannedComponent(id: "p\(i + 1)", name: p.name, type: ComponentType(rawValue: p.type) ?? .library, connectsTo: p.connectsTo.filter(componentIDs.contains))
             },
-            verificationInstructions: verificationSteps(modelSteps: m.verificationSteps, request: analysis.text))
-    }
-
-    /// Keep named test scenarios, but don't let the model invent what each scenario should do.
-    static func verificationSteps(modelSteps: [String], request: String) -> [String] {
-        let nsRequest = request as NSString
-        guard let regex = try? NSRegularExpression(pattern: #"\btests?\s+([^.!?\n]+)"#, options: [.caseInsensitive]),
-              let match = regex.firstMatch(in: request, range: NSRange(location: 0, length: nsRequest.length)),
-              let range = Range(match.range(at: 1), in: request) else { return modelSteps }
-        var scenarios = String(request[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-        for suffix in [" cases", " case"] where scenarios.lowercased().hasSuffix(suffix) {
-            scenarios = String(scenarios.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            break
-        }
-        guard !scenarios.isEmpty, scenarios.count <= 160,
-              ![" then ", " fix ", " stop ", " and report "].contains(where: { scenarios.localizedCaseInsensitiveContains($0) }) else {
-            return modelSteps
-        }
-        return ["Test the requested cases (\(scenarios)). Verify outcomes stated in the request; where an outcome is unspecified, observe and preserve existing behavior."]
+            verificationInstructions: m.verificationSteps)
     }
 
     /// The offline plan: everything here comes from the request text and the analyzer, nothing invented.

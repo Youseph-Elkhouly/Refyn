@@ -18,7 +18,40 @@ public enum ModelOutput {
     public static func jsonObject(from raw: String) -> String? {
         let text = stripReasoning(raw)
         guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return nil }
-        return String(text[start...end])
+        return closingMissingBrackets(String(text[start...end]))
+    }
+
+    /// Small models sometimes close an array with `}` or leave one open ("…the fix"}). Valid JSON is returned unchanged;
+    /// otherwise the missing `]` or `}` are inserted where the structure shows they belong, so one slipped bracket
+    /// does not throw away a whole generation.
+    static func closingMissingBrackets(_ json: String) -> String {
+        var out = ""
+        var stack: [Character] = []
+        var inString = false, escaped = false
+        for ch in json {
+            if inString {
+                out.append(ch)
+                if escaped { escaped = false } else if ch == "\\" { escaped = true } else if ch == "\"" { inString = false }
+                continue
+            }
+            switch ch {
+            case "\"": inString = true; out.append(ch)
+            case "{", "[": stack.append(ch); out.append(ch)
+            case "}", "]":
+                let wanted: Character = ch == "}" ? "{" : "["
+                // A closer with nothing left to close ("…"}}" for "…"]}") is dropped.
+                if stack.isEmpty { continue }
+                if let top = stack.last, top != wanted, stack.contains(wanted) {
+                    // Close the inner containers that were left open before this closer.
+                    while let open = stack.last, open != wanted { out.append(open == "[" ? "]" : "}"); stack.removeLast() }
+                }
+                if stack.last == wanted { stack.removeLast() }
+                out.append(ch)
+            default: out.append(ch)
+            }
+        }
+        while let open = stack.popLast() { out.append(open == "[" ? "]" : "}") }
+        return out
     }
 }
 

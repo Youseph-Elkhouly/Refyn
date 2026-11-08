@@ -148,6 +148,8 @@ final class StoreAndGraphTests: XCTestCase {
 
         let ctx = ContextRetriever.retrieve(for: RequestAnalysis("paginate listUsers in the user service"), workspaceName: "sample", graph: graph, notes: notes)
         XCTAssertEqual(ctx.components.first?.id, "mod:src/services")
-        XCTAssertEqual(ctx.notes, ["Style: Prefer small functions"])
+        XCTAssertEqual(ctx.notes, [], "A note unrelated to the request stays out of the prompt")
+        let related = ContextRetriever.retrieve(for: RequestAnalysis("paginate listUsers and prefer small functions"), workspaceName: "sample", graph: graph, notes: notes)
+        XCTAssertEqual(related.notes, ["Style: Prefer small functions"])
     }
 }

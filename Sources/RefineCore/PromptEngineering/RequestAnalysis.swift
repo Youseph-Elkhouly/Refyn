@@ -28,7 +28,7 @@ public struct RequestAnalysis: Sendable, Hashable {
         taskType = Self.classify(text)
         // A sentence containing one constraint can still be the entire multi-part request.
         // Keep the extracted constraint list focused; the full request is preserved separately.
-        constraints = Array(Set(sentences.filter(Self.isConstraint).map { Self.stripFiller($0) }
+        constraints = Array(Set(sentences.filter(Self.isConstraint).flatMap(Self.constraintClauses).map { Self.stripFiller($0) }
             .filter { !$0.isEmpty && $0.count <= 120 })).sorted()
         keyTerms = Self.keyTerms(([text] + self.confirmedRequirements).joined(separator: "\n"))
         let lower = text.lowercased()
@@ -57,6 +57,14 @@ public struct RequestAnalysis: Sendable, Hashable {
         }
         out = out.trimmingCharacters(in: .whitespacesAndNewlines)
         return out.prefix(1).uppercased() + out.dropFirst()
+    }
+
+    /// A sentence such as "add retry but don't retry 4xx, keep the UI" holds several instructions. Keep each prohibition,
+    /// keep-unchanged and limit on its own; a sentence with none of those stays whole.
+    static func constraintClauses(_ sentence: String) -> [String] {
+        let clauses = SemanticValidator.clauses(sentence)
+        let directive = clauses.filter { !SemanticValidator.parse($0).isEmpty }
+        return directive.isEmpty || clauses.count == 1 ? [sentence] : directive
     }
 
     static func isConstraint(_ s: String) -> Bool {
@@ -94,6 +102,7 @@ public struct RequestAnalysis: Sendable, Hashable {
             "\\b([A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*)\\b",         // PascalCase with an inner capital
             "\\b([a-z0-9]+_[a-z0-9_]+)\\b",                    // snake_case
             "(?<![\\w)\\]])(/[\\w/:{}\\[\\]-]+)",                // routes / paths, not "UI/UX" or "open/close"
+            "(?i)\\b([1-5]xx)\\b",                           // HTTP status classes
             "\\b(\\d+(?:\\.\\d+)?(?:ms|s|px|%|mb|gb|kb)?)\\b",   // numbers and units
         ]
         for p in patterns {
