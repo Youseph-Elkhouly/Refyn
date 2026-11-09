@@ -2,13 +2,13 @@ import { AbsoluteFill, Composition, Sequence } from "remotion";
 
 import { MacScene } from "./MacScene";
 import { colors } from "./theme";
-import { EndCard, Opening, Statements } from "./TextScenes";
+import { EndCard, Hook, Statements } from "./TextScenes";
 import { scenes, totalFrames } from "./timeline";
 
 const RefynDemo: React.FC = () => (
   <AbsoluteFill style={{ background: colors.black }}>
-    <Sequence name="Opening" from={scenes.opening.from} durationInFrames={scenes.opening.duration}>
-      <Opening />
+    <Sequence name="Hook" from={scenes.hook.from} durationInFrames={scenes.hook.duration}>
+      <Hook />
     </Sequence>
     <Sequence name="Mac walkthrough" from={scenes.mac.from} durationInFrames={scenes.mac.duration}>
       <MacScene />

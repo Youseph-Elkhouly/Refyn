@@ -1,34 +1,34 @@
 // Scene lengths in frames at 30 fps. VOICEOVER.md is timed against these, so update both together.
 export const scenes = {
-  opening: { from: 0, duration: 150 },
-  mac: { from: 150, duration: 600 },
-  statements: { from: 750, duration: 150 },
-  end: { from: 900, duration: 180 },
+  hook: { from: 0, duration: 104 },
+  mac: { from: 104, duration: 270 },
+  statements: { from: 374, duration: 72 },
+  end: { from: 446, duration: 120 },
 };
 
-export const totalFrames = 1080;
+export const totalFrames = 566;
 
 // Moments inside the Mac scene, relative to the start of that scene.
 export const mac = {
-  zoomToNotch: 45,
-  atNotch: 90,
-  openNotch: 100,
-  panelOpen: 116,
-  cameraOnPanel: 135,
-  typingStart: 138,
-  typingEnd: 195,
-  cursorAtOptimize: 225,
-  clickOptimize: 228,
-  result: 300,
-  resultOpen: 316,
-  scrollStart: 345,
-  scrollEnd: 450,
-  cursorAtCopy: 475,
-  clickCopy: 478,
-  closeNotch: 500,
-  notchClosed: 511,
-  paste: 530,
-  cameraOnTerminal: 540,
+  zoomToNotch: 2,
+  atNotch: 18,
+  openNotch: 22,
+  panelOpen: 34,
+  cameraOnPanel: 46,
+  typingStart: 38,
+  typingEnd: 62,
+  cursorAtOptimize: 72,
+  clickOptimize: 74,
+  result: 104,
+  resultOpen: 114,
+  scrollStart: 134,
+  scrollEnd: 186,
+  cursorAtCopy: 198,
+  clickCopy: 200,
+  closeNotch: 212,
+  notchClosed: 222,
+  paste: 232,
+  cameraOnTerminal: 240,
 };
 
 export const request = "my app is slow and buggy, fix it";

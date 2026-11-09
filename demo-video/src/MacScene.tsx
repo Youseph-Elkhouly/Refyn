@@ -104,7 +104,7 @@ export const MacScene = () => {
   const focusY = interpolate(frame, cameraTimes, [492, 492, 150, 150, 232, 232, 284, 232, 336, 284, 284, 682], { ...clamp, easing: easeInOut });
 
   return (
-    <AbsoluteFill style={{ background: colors.black, opacity: interpolate(frame, [0, 10], [0, 1], clamp) }}>
+    <AbsoluteFill style={{ background: colors.black }}>
       <div style={{ position: "absolute", left: 0, top: 0, transformOrigin: "0 0", translate: `${960 - focusX * zoom}px ${540 - focusY * zoom}px`, scale: zoom }}>
         <div style={{ position: "absolute", left: -14, top: -14, width: display.width + 28, height: display.height + 30, background: colors.black, borderRadius: "32px 32px 0 0", boxShadow: "0 0 0 2px #3a3a3c" }} />
         <div style={{ position: "absolute", left: -96, top: display.height + 16, width: display.width + 192, height: 26, borderRadius: "0 0 30px 30px", background: "linear-gradient(#4a4a4d, #2a2a2c 55%, #18181a)" }} />

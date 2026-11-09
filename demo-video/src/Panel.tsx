@@ -170,7 +170,7 @@ const Result = ({ frame }: { frame: number }) => {
           }}
         >
           {promptLines.map((line, index) => {
-            const start = mac.result + 6 + index * 2.6;
+            const start = mac.result + 6 + index * 1.4;
             return (
               <div
                 key={line.text}
