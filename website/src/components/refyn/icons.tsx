@@ -81,6 +81,12 @@ export const PlusIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const StarIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m8 2 1.85 3.75 4.15.6-3 2.92.7 4.13L8 11.45 4.3 13.4l.7-4.13-3-2.92 4.15-.6Z" />
+  </Icon>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m3 8.5 3.25 3.25L13 4.75" />

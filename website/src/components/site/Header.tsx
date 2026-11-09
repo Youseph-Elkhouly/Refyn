@@ -1,4 +1,4 @@
-import { RefynMark } from "@/components/refyn/icons";
+import { RefynMark, StarIcon } from "@/components/refyn/icons";
 import { navLinks, site } from "@/lib/site";
 
 export function Header() {
@@ -19,9 +19,10 @@ export function Header() {
         <div className="flex items-center gap-2 justify-self-end">
           <a
             href={site.repoUrl}
-            className="hidden h-8 items-center rounded-lg border border-line px-3 text-[13px] font-medium transition-colors duration-200 hover:bg-hover sm:inline-flex"
+            className="hidden h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium transition-colors duration-200 hover:bg-hover sm:inline-flex"
           >
-            GitHub
+            <StarIcon size={13} />
+            Star on GitHub
           </a>
           <a href={site.downloadUrl} className="inline-flex h-8 items-center rounded-lg bg-white px-3 text-[13px] font-medium text-black transition-colors duration-200 hover:bg-white/85">
             Download

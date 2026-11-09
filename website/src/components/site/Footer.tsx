@@ -10,7 +10,7 @@ export function Footer() {
       </span>
       <span>Your prompts stay on your Mac.</span>
       <a href={site.repoUrl} className="rounded transition-colors duration-200 hover:text-ink">
-        GitHub
+        Star on GitHub
       </a>
     </footer>
   );
