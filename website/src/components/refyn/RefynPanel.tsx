@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 import { demoPlan, type DemoMode } from "@/content/prompts";
 
 import { BookmarkIcon, CheckIcon, CopyIcon, GearIcon, HistoryIcon, MicIcon, NoteIcon, PencilIcon, PlusIcon, RefreshIcon, RefynMark, UpDownIcon, XIcon } from "./icons";
@@ -89,7 +91,28 @@ function Composer({ demo }: { demo: RefynDemo }) {
   );
 }
 
+const autoScrollDelayMs = 500;
+const autoScrollMs = 2800;
+
 function Result({ demo, isInteractive }: { demo: RefynDemo; isInteractive: boolean }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { reduced, runId } = demo;
+
+  // The autoplaying hero has nobody to scroll it, so it reads through the prompt on its own.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (isInteractive || reduced || !element) return;
+    element.scrollTop = 0;
+    const start = performance.now() + autoScrollDelayMs;
+    let frame = requestAnimationFrame(function step(now) {
+      const progress = Math.min(Math.max((now - start) / autoScrollMs, 0), 1);
+      const eased = progress * progress * (3 - 2 * progress);
+      element.scrollTop = eased * (element.scrollHeight - element.clientHeight);
+      if (progress < 1) frame = requestAnimationFrame(step);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isInteractive, reduced, runId]);
+
   return (
     <>
       <div className="flex items-start gap-3 px-[18px] py-3">
@@ -113,6 +136,7 @@ function Result({ demo, isInteractive }: { demo: RefynDemo; isInteractive: boole
       </div>
       <div className="relative min-h-0 flex-1">
         <div
+          ref={scrollRef}
           tabIndex={isInteractive ? 0 : undefined}
           aria-label="Optimized prompt"
           className={`h-full overflow-y-auto overscroll-contain px-[18px] pb-3 text-[13px] leading-[19px] transition-opacity duration-200 ${demo.isOptimizing ? "opacity-35" : ""}`}

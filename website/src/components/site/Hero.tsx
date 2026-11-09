@@ -10,8 +10,8 @@ export function Hero() {
       <NotchField targetSelector="#hero-display" />
       <div className="relative mx-auto max-w-[900px] px-5 pt-14 text-center lg:pt-20">
         <p className="font-mono text-[12px] tracking-[0.16em] text-muted uppercase">The prompt optimizer in your notch</p>
-        <h1 id="hero-title" className="font-display mt-5 text-[clamp(3.75rem,9vw,7.25rem)] leading-[1.02] italic">
-          <span className="block text-muted">Better prompts.</span>
+        <h1 id="hero-title" className="font-display mt-5 text-[12.2vw] leading-[1.02] italic sm:text-[clamp(4.75rem,9vw,7.25rem)]">
+          <span className="block text-muted">Optimized prompts.</span>
           <span className="block">Completely free.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-[35rem] text-[18px] leading-[1.5] text-secondary">

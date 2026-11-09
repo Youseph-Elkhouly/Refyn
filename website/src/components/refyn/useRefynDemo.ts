@@ -10,8 +10,8 @@ export type ResultTab = "Prompt" | "Plan";
 
 const total = demoRequest.length;
 const generationMs = 1300;
-const resultHoldMs = 5200;
-const pastedHoldMs = 1800;
+const resultHoldMs = 3900;
+const pastedHoldMs = 1100;
 
 /** All the state of the simulated app. Timings are shortened; the output is prewritten. */
 export function useRefynDemo({ autoplay = false, isPaused = false }: { autoplay?: boolean; isPaused?: boolean } = {}) {

@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Refyn: Better prompts. Completely free. The AI prompt optimizer that lives in your Mac's notch.";
+export const alt = "Refyn: Optimized prompts. Completely free. The AI prompt optimizer that lives in your Mac's notch.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -29,8 +29,8 @@ export default function OpenGraphImage() {
           </div>
           <div style={{ width: 11, height: 11, borderRadius: 11, background: "#000" }} />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", marginTop: 190, fontSize: 118, fontWeight: 700, letterSpacing: -5, lineHeight: 1 }}>
-          <span style={{ color: "#8c8c8c" }}>Better prompts.</span>
+        <div style={{ display: "flex", flexDirection: "column", marginTop: 190, fontSize: 104, fontWeight: 700, letterSpacing: -4, lineHeight: 1.08 }}>
+          <span style={{ color: "#8c8c8c" }}>Optimized prompts.</span>
           <span>Completely free.</span>
         </div>
         <div style={{ display: "flex", marginTop: 36, fontSize: 34, color: "#8c8c8c", letterSpacing: -0.6 }}>The AI prompt optimizer that lives in your Mac&apos;s notch.</div>

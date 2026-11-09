@@ -7,7 +7,7 @@ function siteUrl() {
 export const site = {
   name: "Refyn",
   url: siteUrl(),
-  title: "Refyn: Better prompts. Completely free.",
+  title: "Refyn: Optimized prompts. Completely free.",
   description:
     "Refyn is the free AI prompt optimizer that lives in your Mac's notch. Turn rough ideas into precise, actionable prompts for Claude Code, Codex, and other coding agents, on your own Mac.",
   repoUrl: "https://github.com/Youseph-Elkhouly/Refyn",
