@@ -1,14 +1,27 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 import { MacScreen } from "@/components/mac/MacScreen";
 import { useRefynDemo } from "@/components/refyn/useRefynDemo";
 
-/** The top of the display, rising out of the fold. Plays once on load, then holds on the finished prompt. */
+/** The top of the display, rising out of the fold. Replays continuously, and waits while it's scrolled away. */
 export function HeroVisual() {
-  const demo = useRefynDemo({ autoplay: true });
+  const ref = useRef<HTMLDivElement>(null);
+  const [isInView, setInView] = useState(true);
+  const demo = useRefynDemo({ autoplay: true, isPaused: !isInView });
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div
+      ref={ref}
       id="hero-display"
       role="img"
       aria-label="Refyn opened from a MacBook notch, turning the request “my app is slow and buggy, fix it” into a structured debugging prompt."

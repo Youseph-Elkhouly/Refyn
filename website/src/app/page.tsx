@@ -8,6 +8,7 @@ import { Hero } from "@/components/site/Hero";
 import { HowItWorks } from "@/components/site/HowItWorks";
 import { RevealObserver } from "@/components/site/RevealObserver";
 import { Section } from "@/components/site/Section";
+import { UnderTheHood } from "@/components/site/UnderTheHood";
 import { site } from "@/lib/site";
 
 const structuredData = {
@@ -40,6 +41,7 @@ export default function Home() {
           </Section>
           <Section id="how-it-works" label="How it works" title="Three steps to a better prompt.">
             <HowItWorks />
+            <UnderTheHood />
           </Section>
           <DownloadSection />
         </main>

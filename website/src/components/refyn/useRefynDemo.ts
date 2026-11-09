@@ -10,9 +10,11 @@ export type ResultTab = "Prompt" | "Plan";
 
 const total = demoRequest.length;
 const generationMs = 1300;
+const resultHoldMs = 5200;
+const pastedHoldMs = 1800;
 
 /** All the state of the simulated app. Timings are shortened; the output is prewritten. */
-export function useRefynDemo({ autoplay = false }: { autoplay?: boolean } = {}) {
+export function useRefynDemo({ autoplay = false, isPaused = false }: { autoplay?: boolean; isPaused?: boolean } = {}) {
   const reduced = useReducedMotion() ?? false;
   const [isOpen, setOpen] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
@@ -38,11 +40,11 @@ export function useRefynDemo({ autoplay = false }: { autoplay?: boolean } = {}) 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   useEffect(() => {
-    if (!isOpen || route !== "compose" || isOptimizing || typed >= total) return;
+    if (isPaused || !isOpen || route !== "compose" || isOptimizing || typed >= total) return;
     const delay = typed === 0 ? 340 : 20 + (typed % 5) * 7;
     const id = window.setTimeout(() => setTypedCount((count) => count + 1), delay);
     return () => window.clearTimeout(id);
-  }, [isOpen, route, isOptimizing, typed]);
+  }, [isPaused, isOpen, route, isOptimizing, typed]);
 
   const run = useCallback(
     (outputs: DemoMode) => {
@@ -74,10 +76,37 @@ export function useRefynDemo({ autoplay = false }: { autoplay?: boolean } = {}) 
   }, [autoplay, reduced]);
 
   useEffect(() => {
-    if (!autoplay || !isOpen || route !== "compose" || isOptimizing || typed < total) return;
+    if (!autoplay || isPaused || !isOpen || route !== "compose" || isOptimizing || typed < total) return;
     const id = window.setTimeout(() => run("Auto"), 360);
     return () => window.clearTimeout(id);
-  }, [autoplay, isOpen, route, isOptimizing, typed, run]);
+  }, [autoplay, isPaused, isOpen, route, isOptimizing, typed, run]);
+
+  const finishCopy = useCallback(() => {
+    setCopied(true);
+    after(750, () => {
+      setOpen(false);
+      setCopied(false);
+      after(340, () => setPasted(true));
+    });
+  }, [after]);
+
+  // The autoplaying version keeps going: hold on the result, copy, collapse, paste, then start again.
+  useEffect(() => {
+    if (!autoplay || reduced || isPaused || !isOpen || route !== "result" || isOptimizing || copied) return;
+    const id = window.setTimeout(finishCopy, resultHoldMs);
+    return () => window.clearTimeout(id);
+  }, [autoplay, reduced, isPaused, isOpen, route, isOptimizing, copied, finishCopy]);
+
+  useEffect(() => {
+    if (!autoplay || reduced || isPaused || !pasted) return;
+    const id = window.setTimeout(() => {
+      setPasted(false);
+      setTypedCount(0);
+      setRoute("compose");
+      setOpen(true);
+    }, pastedHoldMs);
+    return () => window.clearTimeout(id);
+  }, [autoplay, reduced, isPaused, pasted]);
 
   const open = useCallback(() => {
     setOpen(true);
@@ -120,12 +149,7 @@ export function useRefynDemo({ autoplay = false }: { autoplay?: boolean } = {}) 
     save: () => setSaved(true),
     copy: () => {
       navigator.clipboard?.writeText(promptToText(output)).catch(() => undefined);
-      setCopied(true);
-      after(750, () => {
-        setOpen(false);
-        setCopied(false);
-        after(340, () => setPasted(true));
-      });
+      finishCopy();
     },
     newPrompt: () => {
       window.clearTimeout(timer.current);
