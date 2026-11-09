@@ -1,14 +1,13 @@
 import type { ReactNode } from "react";
-import { AbsoluteFill, Easing, Interactive, interpolate, random, Sequence, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Interactive, interpolate, random, Sequence, useCurrentFrame } from "remotion";
 
 import { RefynMark } from "./icons";
 import { clamp, colors, ease, fonts } from "./theme";
-import { request } from "./timeline";
 
 const centered = { alignItems: "center", justifyContent: "center" } as const;
 
 /** One line, full frame, on a hard cut. It is legible from its first frame, so it works as the autoplay thumbnail. */
-const Slam = ({ name, children, inverted = false }: { name: string; children: ReactNode; inverted?: boolean }) => {
+const Slam = ({ name, children, inverted = false, size = 232 }: { name: string; children: ReactNode; inverted?: boolean; size?: number }) => {
   const frame = useCurrentFrame();
 
   return (
@@ -18,8 +17,9 @@ const Slam = ({ name, children, inverted = false }: { name: string; children: Re
         style={{
           fontFamily: fonts.display,
           fontStyle: "italic",
-          fontSize: 232,
-          lineHeight: 1,
+          fontSize: size,
+          lineHeight: 1.06,
+          textAlign: "center",
           whiteSpace: "nowrap",
           scale: interpolate(frame, [0, 8], [1.08, 1], { ...clamp, easing: ease }),
         }}
@@ -30,61 +30,32 @@ const Slam = ({ name, children, inverted = false }: { name: string; children: Re
   );
 };
 
-/** The rough request gets swallowed by the notch, which hands off to the product. */
-const RoughPrompt = () => {
-  const frame = useCurrentFrame();
-  const swallow = Easing.bezier(0.6, 0, 0.9, 0.3);
-
-  return (
-    <AbsoluteFill style={{ ...centered, background: colors.black, color: colors.white }}>
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: "50%",
-          translate: "-50% 0",
-          height: 72,
-          borderRadius: "0 0 26px 26px",
-          background: colors.white,
-          width: interpolate(frame, [18, 30, 44, 52], [300, 300, 520, 420], { ...clamp, easing: ease }),
-        }}
-      />
-      <Interactive.Div
-        name="Rough prompt"
-        style={{
-          fontFamily: fonts.display,
-          fontStyle: "italic",
-          fontSize: 124,
-          lineHeight: 1.05,
-          whiteSpace: "nowrap",
-          scale: interpolate(frame, [26, 46], [1, 0.08], { ...clamp, easing: swallow }),
-          translate: `0px ${interpolate(frame, [26, 46], [0, -510], { ...clamp, easing: swallow })}px`,
-          opacity: interpolate(frame, [42, 47], [1, 0], clamp),
-        }}
-      >
-        {request.slice(0, Math.floor(interpolate(frame, [0, 13], [0, request.length], clamp)))}
-      </Interactive.Div>
-    </AbsoluteFill>
-  );
-};
-
-export const Hook = () => (
+export const Problem = () => (
   <AbsoluteFill>
-    <Sequence name="Your AI isn't dumb" durationInFrames={26}>
-      <Slam name="Hook line one">Your AI isn&apos;t dumb.</Slam>
-    </Sequence>
-    <Sequence name="Your prompt is" from={26} durationInFrames={26}>
-      <Slam name="Hook line two" inverted>
-        Your prompt is.
+    <Sequence name="Better prompts" durationInFrames={55}>
+      <Slam name="Problem line" size={150}>
+        You shouldn&apos;t have to
+        <br />
+        prompt for better prompts.
       </Slam>
     </Sequence>
-    <Sequence name="Rough prompt" from={52} durationInFrames={52}>
-      <RoughPrompt />
+    <Sequence name="Through your agents" from={55} durationInFrames={30}>
+      <Slam name="Agents line" size={210} inverted>
+        Through your agents?
+      </Slam>
+    </Sequence>
+    <Sequence name="Expensive" from={85} durationInFrames={25}>
+      <Slam name="Expensive">Expensive.</Slam>
+    </Sequence>
+    <Sequence name="Messy" from={110} durationInFrames={25}>
+      <Slam name="Messy" inverted>
+        Messy.
+      </Slam>
     </Sequence>
   </AbsoluteFill>
 );
 
-const statements = ["Local Qwen3.", "No API keys.", "Works offline."];
+const statements = ["Local Qwen3.", "$0 per prompt.", "Works offline."];
 
 export const Statements = () => (
   <AbsoluteFill>

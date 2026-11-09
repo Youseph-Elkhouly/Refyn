@@ -1,12 +1,13 @@
 // Scene lengths in frames at 30 fps. VOICEOVER.md is timed against these, so update both together.
 export const scenes = {
-  hook: { from: 0, duration: 104 },
-  mac: { from: 104, duration: 270 },
-  statements: { from: 374, duration: 72 },
-  end: { from: 446, duration: 120 },
+  chat: { from: 0, duration: 180 },
+  problem: { from: 180, duration: 135 },
+  mac: { from: 315, duration: 270 },
+  statements: { from: 585, duration: 72 },
+  end: { from: 657, duration: 120 },
 };
 
-export const totalFrames = 566;
+export const totalFrames = 777;
 
 // Moments inside the Mac scene, relative to the start of that scene.
 export const mac = {
