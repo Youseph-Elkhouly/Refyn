@@ -88,7 +88,8 @@ public enum ContextRetriever {
         var noteTexts: [String] = []
         for note in notes where note.includeInContext && budget > 0 {
             guard asksForNotes || !tokens("\(note.title) \(note.body)").intersection(words).isEmpty else { continue }
-            let text = "\(note.title): \(note.body)".prefix(budget)
+            guard let safe = sanitize("\(note.title): \(note.body)") else { continue }
+            let text = safe.prefix(budget)
             budget -= text.count
             noteTexts.append(String(text))
         }
@@ -100,6 +101,22 @@ public enum ContextRetriever {
             languages: (graph?.metadata.languages.filter(\.analyzed).map(\.name) ?? []).filter(named),
             frameworks: (graph?.metadata.frameworks.map(\.name) ?? []).filter(named),
             components: components, notes: noteTexts, analyzed: graph != nil)
+    }
+
+    /// Lines that read as instructions to the model rather than facts about the project.
+    static let injectionPatterns = [#"(?i)\b(?:ignore|disregard|forget|override)\b.{0,30}\b(?:previous|prior|above|earlier|all|any|these|the)\b.{0,20}\b(?:instructions?|rules?|prompts?|context)\b"#,
+                                    #"(?i)\b(?:system|developer)\s*(?:prompt|message)\b"#, #"(?i)\byou are now\b|\bact as\b|\bpretend (?:to be|you)\b"#,
+                                    #"(?i)\b(?:reveal|print|output|repeat)\b.{0,25}\b(?:prompt|instructions|secrets?|api key|password)\b"#,
+                                    #"(?i)^\s*(?:assistant|system|user)\s*:"#, #"<\|.*?\|>"#]
+
+    /// Workspace notes are data. Lines that try to instruct the model are dropped, and angle brackets are removed so a note
+    /// cannot close the tag that wraps the context. Returns nil when nothing is left.
+    static func sanitize(_ note: String) -> String? {
+        let kept = note.components(separatedBy: .newlines).filter { line in
+            !injectionPatterns.contains { line.range(of: $0, options: .regularExpression) != nil }
+        }.joined(separator: "\n").replacingOccurrences(of: "<", with: "").replacingOccurrences(of: ">", with: "")
+        let trimmed = kept.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.hasSuffix(":") ? nil : trimmed
     }
 
     static func tokens(_ text: String) -> Set<String> { tokens([text]) }

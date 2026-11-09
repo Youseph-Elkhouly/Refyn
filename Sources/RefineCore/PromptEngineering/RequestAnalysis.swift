@@ -56,6 +56,7 @@ public struct RequestAnalysis: Sendable, Hashable {
             out = out.replacingOccurrences(of: "\\b\(NSRegularExpression.escapedPattern(for: f))\\s*", with: "", options: [.regularExpression, .caseInsensitive])
         }
         out = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        out = out.replacingOccurrences(of: #"(?i)\bdont\b"#, with: "don't", options: .regularExpression)
         return out.prefix(1).uppercased() + out.dropFirst()
     }
 
@@ -112,13 +113,31 @@ public struct RequestAnalysis: Sendable, Hashable {
                 if let r = Range(m.range(at: capture), in: text) { terms.append(String(text[r])) }
             }
         }
-        let knownLibraries = ["Alamofire", "AFNetworking", "Apollo", "Axios", "Angular", "Django", "Express", "FastAPI", "Flask", "Flutter", "Firebase", "GraphQL", "Hibernate", "Ktor", "Laravel", "Mongoose", "MongoDB", "MySQL", "Next.js", "PostgreSQL", "Postgres", "Prisma", "React", "React Native", "Redis", "Ruby on Rails", "SQLAlchemy", "SQLite", "Spring Boot", "Supabase", "Svelte", "TanStack Query", "TypeORM", "UIKit", "SwiftUI", "Vue", "Vapor", "Kubernetes", "Terraform"]
-        for library in knownLibraries {
+        for library in Self.knownLibraries {
             let pattern = "(?i)(?<![A-Za-z0-9])" + NSRegularExpression.escapedPattern(for: library) + "(?![A-Za-z0-9])"
             if text.range(of: pattern, options: .regularExpression) != nil { terms.append(library) }
         }
         var seen = Set<String>()
         return terms.filter { ($0.count > 1 || $0.allSatisfy(\.isNumber)) && seen.insert($0.lowercased()).inserted }
+    }
+
+    /// Named technologies. A plan that introduces one the request and context never mention is inventing a decision.
+    static let knownLibraries = ["Alamofire", "AFNetworking", "Apollo", "Axios", "Angular", "Django", "Express", "FastAPI", "Flask", "Flutter", "Firebase", "GraphQL", "Hibernate", "Ktor", "Laravel", "Mongoose", "MongoDB", "MySQL", "Next.js", "PostgreSQL", "Postgres", "Prisma", "React", "React Native", "Redis", "Ruby on Rails", "SQLAlchemy", "SQLite", "Spring Boot", "Supabase", "Svelte", "TanStack Query", "TypeORM", "UIKit", "SwiftUI", "Vue", "Vapor", "Kubernetes", "Terraform", "OAuth", "OpenID", "OIDC", "JWT", "MFA", "2FA", "SAML", "SSO", "LDAP", "bcrypt", "Argon2", "gRPC", "Kafka", "RabbitMQ", "Elasticsearch", "Memcached", "WebSocket", "WebSockets"]
+
+    /// The named technologies in `text`.
+    static func technologies(in text: String) -> [String] {
+        let lower = text.lowercased()
+        return knownLibraries.filter { library in
+            var from = lower.startIndex
+            let needle = library.lowercased()
+            while let r = lower.range(of: needle, range: from..<lower.endIndex) {
+                let before = r.lowerBound == lower.startIndex ? nil : lower[lower.index(before: r.lowerBound)]
+                let after = r.upperBound == lower.endIndex ? nil : lower[r.upperBound]
+                if !(before?.isLetter == true || before?.isNumber == true) && !(after?.isLetter == true || after?.isNumber == true) { return true }
+                from = r.upperBound
+            }
+            return false
+        }
     }
 
     /// Terms from the original request that are absent from `prompt`.

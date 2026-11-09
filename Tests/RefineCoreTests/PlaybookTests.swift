@@ -44,18 +44,19 @@ final class PlaybookTests: XCTestCase {
         let prompt = plan.optimizedPrompt
         print(prompt)
         XCTAssertEqual(plan.guidance?.direction, "very slow, smooth")
-        XCTAssertTrue(prompt.contains("800–1200 ms"))
+        XCTAssertFalse(prompt.contains("800–1200 ms"), "A qualitative pace is not authorization to invent a target.")
         XCTAssertTrue(prompt.contains("soft ease-in-out"))
         XCTAssertTrue(prompt.contains("corner radius"))
         XCTAssertTrue(prompt.contains("Target quality (derived from your request"))
         XCTAssertFalse(prompt.contains("200–350 ms"), "A request for slow motion must not be pulled toward fast defaults.")
-        XCTAssertFalse(prompt.contains("im building"), "The meta preface should not leak into the objective.")
+        XCTAssertFalse(prompt.components(separatedBy: "## Objective\n").dropFirst().first?.components(separatedBy: "\n\n").first?.contains("im building") ?? true,
+                       "The meta preface should not leak into the objective.")
         XCTAssertTrue(prompt.contains("very slow opening and closing") || prompt.contains("very slow, smooth"))
     }
 
     func testFastRequestGetsFastNumbers() {
         let ctx = RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false)
         let g = Playbook.match(RequestAnalysis("make the menu open snappy and quick"), context: ctx)
-        XCTAssertTrue(g?.goodLooksLike.first?.contains("120–200 ms") == true)
+        XCTAssertTrue(g?.goodLooksLike.first?.contains("fast response") == true)
     }
 }

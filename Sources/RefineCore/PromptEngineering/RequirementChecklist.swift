@@ -37,6 +37,8 @@ public enum RequirementChecklist {
         var id: String
         var question: String
         var detector: Detector
+        /// Set when a coding agent can find the answer in the repository. Such items are not asked; they become investigation hints.
+        var discoverable: String? = nil
     }
 
     /// Top three unanswered items, ordered by task relevance. Easy renames and similar short
@@ -44,8 +46,18 @@ public enum RequirementChecklist {
     public static func gaps(for analysis: RequestAnalysis, context: RetrievedContext? = nil) -> [RequirementGap] {
         if isSimpleRename(analysis.text) || (analysis.complexity < 2 && analysis.taskType == .other) { return [] }
         let supportingText = relevantSupportingText(for: analysis.text, notes: context?.notes ?? [])
-        return Array(items(for: analysis.taskType).filter { !covered($0.detector, request: supportingText, context: context) }
+        return Array(items(for: analysis.taskType).filter { $0.discoverable == nil && !covered($0.detector, request: supportingText, context: context) }
             .prefix(3).map { RequirementGap(id: $0.id, taskType: analysis.taskType, question: $0.question) })
+    }
+
+    /// Details a coding agent can establish from the repository itself. These are never asked as questions.
+    public static func discoverable(for analysis: RequestAnalysis, context: RetrievedContext? = nil) -> [String] {
+        if isSimpleRename(analysis.text) || (analysis.complexity < 2 && analysis.taskType == .other) { return [] }
+        let supportingText = relevantSupportingText(for: analysis.text, notes: context?.notes ?? [])
+        return items(for: analysis.taskType).compactMap { item in
+            guard let hint = item.discoverable, !covered(item.detector, request: supportingText, context: context) else { return nil }
+            return hint
+        }
     }
 
     private static func relevantSupportingText(for request: String, notes: [String]) -> String {
@@ -82,19 +94,19 @@ public enum RequirementChecklist {
             [
                 .init(id: "performance.metric", question: "Which performance metric or operation should improve?", detector: .metric),
                 .init(id: "performance.target", question: "What target or acceptable improvement should it reach?", detector: .target),
-                .init(id: "performance.workload", question: "What workload or environment should be used to measure it?", detector: .environment),
+                .init(id: "performance.workload", question: "What workload or environment should be used to measure it?", detector: .environment, discoverable: "Find an existing benchmark or realistic workload in the repository to measure with."),
             ]
         case .refactor:
             [
                 .init(id: "refactor.behavior", question: "Must externally visible behavior remain exactly the same?", detector: .behaviorPreservation),
-                .init(id: "refactor.scope", question: "Which callers or parts of the code are in scope?", detector: .scope),
-                .init(id: "refactor.validation", question: "Which checks should confirm the refactor is safe?", detector: .testScenarios),
+                .init(id: "refactor.scope", question: "Which callers or parts of the code are in scope?", detector: .scope, discoverable: "Find the callers of the code being refactored to establish what is in scope."),
+                .init(id: "refactor.validation", question: "Which checks should confirm the refactor is safe?", detector: .testScenarios, discoverable: "Identify the existing tests that cover this code and run them before and after."),
             ]
         case .test:
             [
                 .init(id: "test.scenarios", question: "Which specific scenarios should the tests cover?", detector: .testScenarios),
                 .init(id: "test.outcomes", question: "What should each scenario expect or assert?", detector: .testOutcomes),
-                .init(id: "test.scope", question: "Which behavior or component should remain out of scope?", detector: .scope),
+                .init(id: "test.scope", question: "Which behavior or component should remain out of scope?", detector: .scope, discoverable: "Check the existing tests to see what is already covered before adding new ones."),
             ]
         case .ui:
             [
@@ -105,19 +117,19 @@ public enum RequirementChecklist {
         case .docs:
             [
                 .init(id: "docs.audience", question: "Who is the documentation for, and what should they be able to do?", detector: .audience),
-                .init(id: "docs.location", question: "Where should the documentation live?", detector: .documentationLocation),
-                .init(id: "docs.examples", question: "Should it include examples or troubleshooting guidance?", detector: .acceptance),
+                .init(id: "docs.location", question: "Where should the documentation live?", detector: .documentationLocation, discoverable: "Check where the project keeps its existing documentation and follow it."),
+                .init(id: "docs.examples", question: "Should it include examples or troubleshooting guidance?", detector: .acceptance, discoverable: "Look at neighboring documentation to see whether it includes examples, and match it."),
             ]
         case .config:
             [
-                .init(id: "config.environment", question: "Which environment or configuration target is involved?", detector: .environment),
+                .init(id: "config.environment", question: "Which environment or configuration target is involved?", detector: .environment, discoverable: "Find the existing configuration for each environment before changing any of them."),
                 .init(id: "config.secrets", question: "Are there secret-handling or access constraints?", detector: .scope),
                 .init(id: "config.rollback", question: "What rollback or recovery behavior is required?", detector: .rollback),
             ]
         case .investigation:
             [
                 .init(id: "investigation.question", question: "What specific question should the investigation answer?", detector: .investigationQuestion),
-                .init(id: "investigation.evidence", question: "What evidence or output should the findings include?", detector: .evidence),
+                .init(id: "investigation.evidence", question: "What evidence or output should the findings include?", detector: .evidence, discoverable: "Report findings with file references and the commands you ran."),
             ]
         case .other:
             [

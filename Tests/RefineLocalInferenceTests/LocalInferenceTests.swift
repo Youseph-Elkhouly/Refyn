@@ -358,7 +358,8 @@ final class LocalInferenceTests: XCTestCase {
 
             let text = plan.optimizedPrompt.lowercased()
             if sample.name == "image upload retry" { print("Prompt baseline output [image upload retry]:\n\(plan.optimizedPrompt)") }
-            let keptTerms = sample.retain.allSatisfy { text.contains($0.lowercased()) }
+            // Meaning, not wording: "without altering" satisfies "without changing"; a lost negation, number or identifier does not.
+            let keptTerms = sample.retain.allSatisfy { MeaningMatch.contains(plan.optimizedPrompt, $0) }
             if keptTerms { preserved += 1 }
             if sample.isSimple, plan.optimizedPrompt.split(separator: "\n").count <= 16, !plan.optimizedPrompt.contains("Stage 1") { concise += 1 }
             inventedReferences += plan.codeReferences.count

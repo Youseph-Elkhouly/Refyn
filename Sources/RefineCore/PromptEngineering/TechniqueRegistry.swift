@@ -19,8 +19,8 @@ public struct TechniqueRegistry: Sendable {
                 if hasContext { out.append(.contextInjection) }
             }
         case .advanced:
-            out = [.role, .structured, .constraints, .decomposition, .dependencyPlanning, .multiStage, .verification,
-                   .acceptanceCriteria, .boundedIteration, .selfCritique, .toolUse, .outputFormat]
+            out = [.role, .structured, .constraints, .decomposition, .dependencyPlanning, .verification,
+                   .acceptanceCriteria]
             if hasContext { out.append(.contextInjection) }
             if analysis.hasConditions { out.append(.conditionalBranching) }
             if analysis.complexity >= 7 { out.append(.promptChaining) }
@@ -35,8 +35,8 @@ public struct TechniqueRegistry: Sendable {
                 if hasContext { out.append(.contextInjection) }
                 if analysis.mentionsTests || analysis.taskType == .bugfix { out.append(.verification) }
             default:
-                out = [.role, .structured, .constraints, .decomposition, .dependencyPlanning, .multiStage, .verification,
-                       .acceptanceCriteria, .boundedIteration, .selfCritique, .outputFormat]
+                out = [.role, .structured, .constraints, .decomposition, .dependencyPlanning, .verification,
+                       .acceptanceCriteria]
                 if hasContext { out.append(.contextInjection) }
                 if analysis.complexity >= 8 { out.append(.promptChaining) }
             }

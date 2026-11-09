@@ -29,7 +29,7 @@ final class SemanticValidationTests: XCTestCase {
                                     "keep the current progress UI", "add retry but don't retry 4xx responses", "don't change upload API"],
             suggestedDecisions: ["Show a retry counter in the progress UI", "Use exponential backoff between attempts"],
             constraints: ["Do not retry 4xx responses"],
-            tasks: [.init(id: "t1", title: "Add a retry wrapper around uploadImage", detail: "Retry up to 3 times."),
+            tasks: [.init(id: "t1", title: "Add a retry wrapper around the upload call", detail: "Retry up to 3 times."),
                     .init(id: "t2", title: "Show the retry count in the progress UI", detail: "", dependsOn: ["t1"]),
                     .init(id: "t3", title: "Add tests", detail: "Cover each case.", dependsOn: ["t1"])],
             successCriteria: ["Progress UI reflects retry attempts", "Uploads retry only on 5xx responses", "Offline uploads are automatically retried when the network returns", "Uploads retry up to 3 times"],
@@ -95,7 +95,18 @@ final class SemanticValidationTests: XCTestCase {
         let plan = try await optimize()
         XCTAssertFalse(plan.optimizedPrompt.contains("SpeechRecognizer"))
         XCTAssertTrue(plan.optimizedPrompt.contains("src/upload/ImageUploader.ts"))
-        XCTAssertTrue(plan.optimizedPrompt.contains("matched by name only"), "a name match is not proof that the file implements the feature")
+        // A symbol in the code graph that matches the request is stronger evidence than a file name and is labelled as such.
+        XCTAssertTrue(plan.optimizedPrompt.contains("Found in the code graph"))
+        XCTAssertTrue(plan.optimizedPrompt.contains("symbol `uploadImage`"))
+        XCTAssertFalse(plan.optimizedPrompt.contains("matched by name only"), "nothing here is a name-only match")
+    }
+
+    func testFileMatchedOnlyByNameIsAnInvestigationTarget() async throws {
+        let graph = try Fixtures.graph(nodes: [GraphNode(id: "mod:src/upload", name: "src/upload", type: .service, path: "src/upload", group: "Services", files: ["src/upload/ImageUploader.ts"])], edges: [])
+        var model = Self.flawedModelPlan(); model.codeReferences = [.init(path: "src/upload/ImageUploader.ts", reason: "upload code")]
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(model))).optimize(.init(text: Self.request, mode: .advanced, graph: graph))
+        XCTAssertTrue(plan.optimizedPrompt.contains("Investigation targets (matched by name only"))
+        XCTAssertFalse(plan.optimizedPrompt.contains("Found in the code graph"))
     }
 
     func testAFollowingInstructionIsNotSwallowedByAKeepClause() async throws {
@@ -203,7 +214,7 @@ final class SemanticValidationTests: XCTestCase {
     func testDefinitionsAppearOnlyForConceptsTheRequestUses() async throws {
         let plan = try await optimize("make search faster but don't change the result order or the public API", plan: ModelPlan(intent: "", taskType: "", role: "", objective: "Make search faster"))
         let terms = plan.terminology ?? []
-        XCTAssertTrue(terms.contains { $0.hasPrefix("Latency") })
+        XCTAssertFalse(terms.contains { $0.hasPrefix("Latency") }, "Do not add a definition for a metric the user did not name.")
         XCTAssertFalse(terms.contains { $0.contains("timeout") || $0.contains("4xx") })
     }
 

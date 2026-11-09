@@ -39,7 +39,7 @@ public struct PromptOptimizer: Sendable {
         let context = ContextRetriever.retrieve(for: analysis, workspaceName: input.workspace?.name ?? "", graph: input.graph, notes: input.notes)
         let parts = [analysis.text, input.mode.rawValue, input.customTechniques.map(\.rawValue).sorted().joined(separator: ","), context.hash,
                      input.userAnswers.map { "\($0.id):\($0.answer)" }.joined(separator: "\n"), input.unansweredQuestions.joined(separator: "\n"),
-                     String(input.iterationLimit), provider?.identifier ?? "local", "v4"]
+                     String(input.iterationLimit), provider?.identifier ?? "local", "v5-quality"]
         return SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -82,62 +82,93 @@ public struct PromptOptimizer: Sendable {
         }
         let requestTier: OptimizationTier = input.mode == .custom ? .complex : tier
         let directRewrite = provider == nil || quick || (input.mode == .custom && !needsEngineering && techniques.contains(.zeroShot) && lightweight)
+        var trace = PipelineTrace(tier: requestTier.rawValue)
         if let provider {
             if !directRewrite {
                 let request = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
                                                  iterationLimit: iterationLimit, userAnswers: input.userAnswers,
                                                  unansweredQuestions: unansweredQuestions, tier: requestTier)
-                do {
-                    let raw = try await provider.plan(for: request)
+                let allowed: Set<Int> = iterationLimit > 0 ? [iterationLimit] : []
+                struct Attempt {
+                    var guarded: InventionGuard.Result
+                    var dropped: [String]
+                    var corrections: [SemanticValidator.Correction]
+                    var semanticObjective: String
+                }
+                /// One model call followed by the local checks: schema, semantic correction, then invention detection.
+                func attempt(_ req: OptimizationRequest) async throws -> Attempt {
+                    trace.modelCalls += 1
+                    let raw = try await provider.plan(for: req)
+                    if raw.recoveryEdits > 0 { trace.jsonRecoveryEdits += raw.recoveryEdits; trace.add("json", "recovered", "\(raw.recoveryEdits) bracket edit(s)") }
+                    trace.add("parsed", "counts", "tasks=\(raw.tasks.count), verification=\(raw.verificationSteps.count)")
                     let (valid, dropped) = try raw.validated(knownPaths: context.knownPaths)
+                    trace.add("schema", "counts", "tasks=\(valid.tasks.count), verification=\(valid.verificationSteps.count)")
                     // Fix contradictions and narrowing first, locally, so they neither trigger a retry nor a fallback.
-                    let (semantic, semanticNotices) = SemanticValidator.correct(valid, analysis: analysis)
-                    notices += semanticNotices
-                    let first = InventionGuard.apply(to: semantic, analysis: analysis, context: context, allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
-                    if requestTier != .complex {
-                        // Retrying costs a second generation. The guard already repaired the plan, so report instead.
-                        modelPlan = first.plan
-                        providerID = provider.identifier
-                        notices += first.notices
-                        if !dropped.isEmpty { notices.append("Removed unverified file references: \(dropped.prefix(3).joined(separator: ", ")).") }
-                    } else if first.hasViolations {
-                        // One bounded correction attempt: local generation is expensive, so never loop.
-                        let issues = (first.unverified + first.demoted + dropped).prefix(12).joined(separator: "; ")
+                    let (semantic, corrections) = SemanticValidator.correctWithReport(valid, analysis: analysis, context: context)
+                    trace.corrections += corrections.count
+                    for c in corrections { trace.add("semantic", c.action.rawValue, "\(c.list): \(c.clause) (\(c.reason))") }
+                    trace.add("semantic", "counts", "tasks=\(semantic.tasks.count), verification=\(semantic.verificationSteps.count)")
+                    let guarded = InventionGuard.apply(to: semantic, analysis: analysis, context: context, allowedNumbers: allowed)
+                    trace.add("guarded", "counts", "tasks=\(guarded.plan.tasks.count), verification=\(guarded.plan.verificationSteps.count)")
+                    if guarded.hasViolations { trace.add("invention-guard", "repaired", "\((guarded.unverified + guarded.demoted).prefix(4).joined(separator: "; "))") }
+                    return Attempt(guarded: guarded, dropped: dropped, corrections: corrections, semanticObjective: semantic.objective)
+                }
+                func fallback(_ reason: String, _ notice: String) {
+                    trace.fallbackReason = reason; trace.add("fallback", "local-builder", reason); notices.append(notice)
+                }
+                do {
+                    var first: Attempt
+                    do {
+                        first = try await attempt(request)
+                    } catch let error as LLMError {
+                        guard case .invalidResponse(let message) = error else { throw error }
+                        // One retry of the same request for unusable output; it is sampled, so it often succeeds.
+                        trace.retries += 1; trace.add("model", "unusable-output", message); trace.add("retry", "same-prompt", "unusable output")
+                        first = try await attempt(request)
+                    } catch let error as ModelPlan.ValidationError {
+                        trace.retries += 1; trace.add("model", "invalid-plan", error.localizedDescription); trace.add("retry", "same-prompt", "invalid plan")
+                        first = try await attempt(request)
+                    }
+                    notices += SemanticValidator.notice(for: first.corrections).map { [$0] } ?? []
+                    var chosen = first
+                    // Retry only when the repaired plan lost its substance. The guard already moves unsupported detail to suggestions,
+                    // so a second 10–20 s generation for a cosmetic issue is not worth the latency.
+                    let severe = first.guarded.plan.tasks.isEmpty || (first.guarded.demoted.contains(first.semanticObjective) && requestTier == .complex)
+                    if requestTier == .complex, severe, first.guarded.hasViolations, trace.retries == 0 {
+                        let issues = (first.guarded.unverified + first.guarded.demoted + first.dropped).prefix(12).joined(separator: "; ")
                         let correction = "The previous draft introduced unsupported specifics: \(issues). Regenerate the JSON plan using only details found in the user request, user answers, or retrieved workspace context. Remove unsupported details from actionable fields; do not guess."
+                        trace.retries += 1; trace.add("retry", "corrective", "plan lost its substance: \(issues.prefix(160))")
                         let retryRequest = OptimizationRequest(analysis: analysis, mode: input.mode, techniques: techniques, context: context,
                                                                iterationLimit: iterationLimit, userAnswers: input.userAnswers,
                                                                unansweredQuestions: unansweredQuestions, correctiveInstruction: correction, tier: requestTier)
                         do {
-                            let retryRaw = try await provider.plan(for: retryRequest)
-                            let (retryValid, retryDropped) = try retryRaw.validated(knownPaths: context.knownPaths)
-                            let retry = InventionGuard.apply(to: SemanticValidator.correct(retryValid, analysis: analysis).plan, analysis: analysis, context: context,
-                                                            allowedNumbers: iterationLimit > 0 ? [iterationLimit] : [])
-                            if retry.hasViolations || !retryDropped.isEmpty {
-                                notices += retry.notices
-                                if !retryDropped.isEmpty { notices.append("Removed unverified file references: \(retryDropped.prefix(3).joined(separator: ", ")).") }
-                                notices.append("The model repeated unsupported details after one correction attempt; used the deterministic prompt builder.")
-                            } else {
-                                modelPlan = retry.plan
-                                providerID = provider.identifier
-                            }
+                            let second = try await attempt(retryRequest)
+                            if !second.guarded.plan.tasks.isEmpty { chosen = second }
                         } catch let error as LLMError where error == .cancelled {
                             throw error
                         } catch {
-                            notices.append("The corrective generation did not complete; used the deterministic prompt builder. \(error.localizedDescription)")
+                            trace.add("retry", "failed", error.localizedDescription)
                         }
+                    }
+                    let p = chosen.guarded.plan
+                    if p.tasks.isEmpty, p.suggestedDecisions.isEmpty, p.confirmedRequirements.isEmpty, p.constraints.isEmpty, p.successCriteria.isEmpty, p.verificationSteps.isEmpty {
+                        fallback("model plan had no usable content after checks", "The local model's plan had no usable content after checks; used the deterministic prompt builder.")
                     } else {
-                        modelPlan = first.plan
+                        modelPlan = chosen.guarded.plan
                         providerID = provider.identifier
-                        if !dropped.isEmpty { notices.append("Removed unverified file references: \(dropped.prefix(3).joined(separator: ", ")).") }
+                        notices += chosen.guarded.notices
+                        if !chosen.dropped.isEmpty { notices.append("Removed unverified file references: \(chosen.dropped.prefix(3).joined(separator: ", ")).") }
+                        trace.add("model", "accepted", "tier \(requestTier.rawValue), \(trace.modelCalls) call(s)")
                     }
                 } catch let error as ModelPlan.ValidationError {
-                    notices.append("The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
+                    fallback("invalid plan after retry: \(error.localizedDescription)", "The local model returned an invalid plan (\(error.localizedDescription)); used the deterministic local prompt builder instead.")
                 } catch let error as LLMError {
-                    if case .invalidResponse = error {
-                        notices.append("The local model returned malformed output; used the deterministic local prompt builder instead.")
+                    if case .invalidResponse(let message) = error {
+                        fallback("unusable output after retry: \(message.prefix(120))", "The local model returned malformed output twice; used the deterministic local prompt builder instead.")
                     } else if error == .modelNotInstalled, !needsEngineering {
                         // A simple request still works without the model; only the extra improvement is skipped.
                         techniques = originalTechniques
+                        trace.add("model", "not-installed", "simple request cleaned up locally")
                         notices.append("The local model is not installed, so this simple request was only cleaned up. Download it in Settings for a fuller rewrite.")
                     } else {
                         throw error
@@ -158,11 +189,17 @@ public struct PromptOptimizer: Sendable {
         plan.guidance = guidance
         plan.cacheKey = cacheKey(for: input)
         plan.missingInformation = Self.dedupe(plan.missingInformation + unansweredQuestions)
+        if input.mode != .custom || techniques.contains(.decomposition) || techniques.contains(.verification) {
+            let issues = PromptQuality.repair(&plan, analysis: analysis, context: context)
+            if !issues.isEmpty { trace.add("quality", "repaired-locally", issues.joined(separator: "; ")) }
+        }
+        trace.add("composition", "input", "tasks=\(plan.tasks.count), verification=\(plan.verificationInstructions.count)")
+
 
         // 8: construction.
         let modelRole = modelPlan?.role.trimmingCharacters(in: .whitespacesAndNewlines)
         let role = modelRole.flatMap { $0.count >= 16 && $0.lowercased() != "refine" ? $0 : nil } ?? Self.defaultRole(context)
-        var objective = modelPlan?.objective ?? analysis.intent
+        var objective = Playbook.underspecified(analysis) != nil ? analysis.intent : (modelPlan?.objective ?? analysis.intent)
         if guidance != nil, modelPlan == nil {
             if let preface = objective.range(of: #"^.*?\bprompt\s*:\s*"#, options: [.regularExpression, .caseInsensitive]) {
                 objective = String(objective[preface.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -190,8 +227,10 @@ public struct PromptOptimizer: Sendable {
         }
 
         // 10: final.
+        trace.add("composition", "rendered", "characters=\(prompt.count), tasks=\(plan.tasks.count)")
         plan.optimizedPrompt = prompt
         plan.notices = notices
+        plan.trace = trace
         plan.updatedAt = .now
         return plan
     }

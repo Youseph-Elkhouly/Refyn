@@ -197,10 +197,10 @@ final class PromptEngineeringTests: XCTestCase {
     func testAdvancedAddsStagesAndBoundedLoop() async throws {
         let prompt = "Implement a feature with tests, update the relevant interfaces, preserve existing behavior, and explain all changes made in the project."
         let plan = try await offline.optimize(.init(text: prompt, mode: .advanced, iterationLimit: 3))
-        XCTAssertTrue(plan.optimizedPrompt.contains("## Stage 1 — Inspect"))
-        XCTAssertTrue(plan.optimizedPrompt.contains("## Stage 3 — Verify"))
-        XCTAssertTrue(plan.optimizedPrompt.contains("Stop after 3 attempts"))
-        XCTAssertEqual(plan.iterationLimit, 3)
+        XCTAssertFalse(plan.optimizedPrompt.contains("## Stage 1 — Inspect"))
+        XCTAssertTrue(plan.optimizedPrompt.contains("## Verification"))
+        XCTAssertFalse(plan.optimizedPrompt.contains("Stop after 3 attempts"))
+        XCTAssertEqual(plan.iterationLimit, 0, "A default iteration limit is internal and should not become a user instruction.")
         XCTAssertEqual(plan.originalPrompt, prompt)
         XCTAssertFalse(plan.optimizedPrompt.localizedCaseInsensitiveContains("chain of thought"))
     }
@@ -215,7 +215,7 @@ final class PromptEngineeringTests: XCTestCase {
     func testCustomModeUsesExactlyTheChosenTechniques() async throws {
         let plan = try await offline.optimize(.init(text: "Fix the crash in `ParserService` when input is empty", mode: .custom, customTechniques: [.fewShot, .constraints]))
         XCTAssertEqual(Set(plan.selectedTechniques), [.fewShot, .constraints])
-        XCTAssertTrue(plan.optimizedPrompt.contains("## Example report"))
+        XCTAssertFalse(plan.optimizedPrompt.contains("## Example report"), "Selecting few-shot does not justify a fabricated placeholder report.")
     }
 
     func testSpecificTermsSurviveOptimization() async throws {
@@ -273,16 +273,21 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertFalse(plan.optimizedPrompt.contains("src/private/routes.ts"))
     }
 
-    func testNoveltyGuardFallsBackAfterOneFailedCorrection() async throws {
+    /// Changed from "retries once, then falls back to the local builder": an invented technology in the objective is now removed
+    /// locally, so the model plan is kept with no second generation. A retry is reserved for plans that lose their substance
+    /// (see testNoveltyGuardRetriesOnceWithCorrectiveInstruction-style tests above).
+    func testInventedTechnologyIsRemovedLocallyWithoutRetryOrFallback() async throws {
         var invented = ModelPlan.sample()
         invented.objective = "Add pagination using Redis"
         let state = SequencedProviderState([invented, invented])
         let plan = try await PromptOptimizer(provider: SequencedProvider(state: state)).optimize(.init(text: "add pagination to listUsers", mode: .advanced))
         let requests = await state.requests
-        XCTAssertEqual(requests.count, 2, "A failed correction must not trigger another generation.")
-        XCTAssertEqual(plan.provider, "local")
-        XCTAssertFalse(plan.optimizedPrompt.localizedCaseInsensitiveContains("Redis"))
-        XCTAssertTrue(plan.notices.contains { $0.localizedCaseInsensitiveContains("deterministic prompt builder") })
+        XCTAssertEqual(requests.count, 1, "nothing was lost, so no second generation")
+        XCTAssertEqual(plan.provider, "sequenced-model")
+        XCTAssertFalse(plan.optimizedPrompt.localizedCaseInsensitiveContains("Redis"), "the invented technology never reaches the prompt")
+        XCTAssertEqual(plan.trace?.retries, 0)
+        XCTAssertTrue(plan.trace?.events.contains { $0.stage == "semantic" && $0.detail.contains("Redis") } == true, "the correction and its reason are recorded")
+        XCTAssertNil(plan.trace?.fallbackReason)
     }
 
     func testLocalModelFailureIsVisibleInsteadOfSilentlyFallingBack() async {
@@ -350,7 +355,9 @@ final class PromptEngineeringTests: XCTestCase {
         generated.successCriteria = ["The avatar is kept after saving", "no user input required"]
         let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated)))
             .optimize(.init(text: "saving a profile sometimes loses the avatar", mode: .auto))
-        XCTAssertEqual(plan.suggestedDecisions, ["Check the avatar saving logic"])
+        // Discoverable-from-code hints may follow the model's own suggestion; what matters is that no copied prompt rule remains.
+        XCTAssertEqual(plan.suggestedDecisions.first, "Check the avatar saving logic")
+        XCTAssertFalse(plan.suggestedDecisions.contains { $0.localizedCaseInsensitiveContains("do not invent") || $0.localizedCaseInsensitiveContains("no user input") })
         XCTAssertEqual(plan.successCriteria, ["The avatar is kept after saving"])
     }
 

@@ -85,7 +85,7 @@ final class SemanticEvaluationTests: XCTestCase {
             let prompt = plan.optimizedPrompt
             let lower = prompt.lowercased()
             var checks: [(String, Bool)] = []
-            checks.append(("keeps " + c.retain.joined(separator: ", "), c.retain.allSatisfy { lower.contains($0.lowercased()) }))
+            checks.append(("keeps " + c.retain.joined(separator: ", "), c.retain.allSatisfy { MeaningMatch.contains(prompt, $0) }))
             for phrase in c.forbidden { checks.append(("absent: \(phrase)", !lower.contains(phrase.lowercased()))) }
             for unrelated in ["audio", "speech", "prompthistory", "prompt history", "express", "typescript"] {
                 checks.append(("unrelated absent: \(unrelated)", !lower.contains(unrelated)))

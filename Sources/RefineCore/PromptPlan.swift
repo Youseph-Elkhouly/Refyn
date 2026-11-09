@@ -154,6 +154,25 @@ public struct IntentValidation: Codable, Hashable, Sendable {
 }
 
 /// What the user wants the coding agent to do. Not a description of the existing codebase (see `CodebaseGraph`).
+/// Why the pipeline did what it did: every model call, retry, correction and fallback with its reason.
+public struct PipelineTrace: Codable, Hashable, Sendable {
+    public struct Event: Codable, Hashable, Sendable {
+        public var stage: String
+        public var outcome: String
+        public var detail: String
+    }
+    public var tier: String
+    public var events: [Event] = []
+    public var modelCalls = 0
+    public var retries = 0
+    public var jsonRecoveryEdits = 0
+    public var corrections = 0
+    public var fallbackReason: String?
+
+    public init(tier: String) { self.tier = tier }
+    public mutating func add(_ stage: String, _ outcome: String, _ detail: String = "") { events.append(Event(stage: stage, outcome: outcome, detail: detail)) }
+}
+
 public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
     public var workspaceID: UUID?
@@ -185,6 +204,8 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
     /// "local" when built without a model call.
     public var provider: String
     public var notices: [String]
+    /// Optional so plans saved before it existed still decode.
+    public var trace: PipelineTrace?
     public var cacheKey: String
     public var createdAt: Date
     public var updatedAt: Date
@@ -194,7 +215,7 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
                 codeReferences: [CodeReference] = [], tasks: [PlanTask] = [], constraints: [String] = [], successCriteria: [String] = [],
                 missingInformation: [String] = [], confirmedRequirements: [String] = [], suggestedDecisions: [String] = [],
                 plannedComponents: [PlannedComponent] = [], iterationLimit: Int = 0, verificationInstructions: [String] = [], guidance: PlaybookGuidance? = nil, terminology: [String]? = nil,
-                validation: IntentValidation = IntentValidation(), provider: String = "local", notices: [String] = [], cacheKey: String = "",
+                validation: IntentValidation = IntentValidation(), provider: String = "local", notices: [String] = [], trace: PipelineTrace? = nil, cacheKey: String = "",
                 createdAt: Date = .now, updatedAt: Date = .now) {
         self.id = id; self.workspaceID = workspaceID; self.originalPrompt = originalPrompt; self.optimizedPrompt = optimizedPrompt
         self.chainedPrompts = chainedPrompts; self.mode = mode; self.intent = intent; self.taskType = taskType
@@ -203,6 +224,6 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
         self.confirmedRequirements = confirmedRequirements; self.suggestedDecisions = suggestedDecisions
         self.plannedComponents = plannedComponents; self.iterationLimit = iterationLimit
         self.verificationInstructions = verificationInstructions; self.guidance = guidance; self.terminology = terminology; self.validation = validation; self.provider = provider
-        self.notices = notices; self.cacheKey = cacheKey; self.createdAt = createdAt; self.updatedAt = updatedAt
+        self.notices = notices; self.trace = trace; self.cacheKey = cacheKey; self.createdAt = createdAt; self.updatedAt = updatedAt
     }
 }

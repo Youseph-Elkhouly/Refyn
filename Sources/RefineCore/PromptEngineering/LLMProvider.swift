@@ -71,6 +71,8 @@ public struct ModelPlan: Codable, Hashable, Sendable {
     public var plannedComponents: [Planned]?
     public var exampleReport: String?
     public var intentPreserved: Bool
+    /// Brackets the output parser had to insert or drop to make the JSON valid. Not part of the model schema.
+    public var recoveryEdits = 0
 
     public init(intent: String, taskType: String, role: String, objective: String, confirmedRequirements: [String] = [],
                 suggestedDecisions: [String] = [], constraints: [String] = [], tasks: [Task] = [], successCriteria: [String] = [],

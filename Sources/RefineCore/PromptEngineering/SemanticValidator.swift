@@ -29,7 +29,7 @@ public enum SemanticValidator {
     static func clauses(_ text: String) -> [String] {
         let normalized = text.replacingOccurrences(of: "’", with: "'")
         let marker = #"(?:don'?t|do not|never|keep|max(?:imum)?\b|at most|up to|no more than|without|must|avoid|preserve|leave|only|no\s|test|ensure|make sure|add|implement|create|build|write|run|fix|update|make|refactor|use|support|handle|include|report|then)"#
-        let split = #"(?:,\s*(?:and\s+|but\s+)?|\s+but\s+|\s+and\s+|;\s*)(?="# + marker + ")"
+        let split = #"(?:,\s*(?:and\s+|but\s+)?|\s+but\s+|\s+and\s+|;\s*|\s+(?=without\b))(?="# + marker + ")"
         var out: [String] = []
         // Dictated or hurried requests often have no capitals after a full stop, so split on punctuation rather than language rules.
         let sentences = normalized.components(separatedBy: .newlines).flatMap {
@@ -45,7 +45,10 @@ public enum SemanticValidator {
     /// One clause can forbid or preserve several things ("don't change the result order or the public API"). Each gets its own directive.
     static func parse(_ clause: String) -> [Directive] {
         let text = clause.replacingOccurrences(of: "’", with: "'").trimmingCharacters(in: .whitespacesAndNewlines)
-        func make(_ kind: Directive.Kind, lead: String = "", verb: String = "", object: String, limit: Int? = nil, unit: String = "") -> [Directive] {
+        func make(_ kind: Directive.Kind, lead: String = "", verb: String = "", object rawObject: String, limit: Int? = nil, unit: String = "") -> [Directive] {
+            // "mess up the design" keeps "the design"; "without breaking anything" protects existing behavior as a whole.
+            var object = rawObject.replacingOccurrences(of: #"(?i)^up\s+"#, with: "", options: .regularExpression)
+            if kind == .preserve, ["anything", "everything", "stuff", "things"].contains(object.lowercased().trimmingCharacters(in: .whitespaces)) { object = "existing behavior" }
             let parts = kind == .limit ? [object]
                 : object.replacingOccurrences(of: #"\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+"#, with: "\u{1}", options: [.regularExpression, .caseInsensitive])
                     .split(separator: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -57,6 +60,9 @@ public enum SemanticValidator {
             }
         }
         func isChange(_ verb: String) -> Bool { Lex.changeVerbs.contains { Lex.same($0, verb) } }
+        if let m = text.captures(#"^(?:don'?t|do not)\s+mess up\s+(.+)$"#) {
+            return make(.preserve, object: m[1])
+        }
         if let m = text.captures(#"^((?:please\s+)?(?:don'?t|do not|never|avoid|must not|should not|shouldn'?t))\s+(\w+)\s*(.*)$"#) {
             return isChange(m[2]) ? make(.preserve, lead: "\(m[1]) \(m[2])", object: m[3]) : make(.prohibit, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
         }
@@ -109,90 +115,191 @@ public enum SemanticValidator {
 
     // MARK: Correction of a generated plan
 
-    /// Removes generated items that contradict, narrow or extend what the user wrote. Everything else is untouched.
-    public static func correct(_ original: ModelPlan, analysis: RequestAnalysis) -> (plan: ModelPlan, notices: [String]) {
+    /// One change the validator made, with the reason. Used for notices, the pipeline trace and evaluation.
+    public struct Correction: Equatable, Sendable {
+        public enum Action: String, Sendable { case removed, demoted, rewritten }
+        public var list: String
+        public var original: String
+        /// The clause that was removed, moved or rewritten.
+        public var clause: String
+        public var action: Action
+        public var reason: String
+    }
+
+    enum ListKind: String { case objective, requirement, constraint, suggestion, criterion, verification, task
+        var isOutcome: Bool { self == .requirement || self == .criterion || self == .constraint }
+    }
+
+    struct Finding { enum Severity { case delete, demote, rewrite(String) }; var severity: Severity; var reason: String }
+
+    /// Corrects generated text clause by clause. A clause that contradicts or extends the request is removed or rewritten;
+    /// the rest of the item survives. When a clause is only unsupported rather than contradictory, it is demoted to a suggestion.
+    public static func correct(_ original: ModelPlan, analysis: RequestAnalysis, context: RetrievedContext? = nil) -> (plan: ModelPlan, notices: [String]) {
+        let (plan, corrections) = correctWithReport(original, analysis: analysis, context: context)
+        return (plan, notice(for: corrections).map { [$0] } ?? [])
+    }
+
+    public static func notice(for corrections: [Correction]) -> String? {
+        guard !corrections.isEmpty else { return nil }
+        let summary = corrections.prefix(2).map { "\($0.action.rawValue) \"\($0.clause)\" (\($0.reason))" }.joined(separator: "; ")
+        return "Corrected \(corrections.count) clause\(corrections.count == 1 ? "" : "s") that conflicted with the request: \(summary)."
+    }
+
+    public static func correctWithReport(_ original: ModelPlan, analysis: RequestAnalysis, context: RetrievedContext? = nil) -> (plan: ModelPlan, corrections: [Correction]) {
         let request = analysis.searchText
         let directives = directives(in: request)
-        guard !directives.isEmpty else { return (original, []) }
         let scenarios = testScenarios(in: request)
         let trigger = failureTrigger(in: request)
         let addition = requestedAddition(in: request)
         let requestWords = Lex.words(request)
-
+        let supportedTech = Set(RequestAnalysis.technologies(in: ([request] + InventionGuard.sources(analysis: analysis, context: context ?? RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false))).joined(separator: "\n")).map { $0.lowercased() })
         let behaviorStems = directives.filter { $0.kind == .prohibit }.map(\.verb) + [addition].compactMap { $0.map(Lex.stem) }
             + directives.filter { $0.kind == .limit }.map { Lex.stem($0.unit) }
         let unstated = scenarios.filter { !$0.outcomeStated }
-        // Words with digits ("4xx") tie an item to something the user actually specified.
+        // Words with digits ("4xx") tie a clause to something the user actually specified.
         let anchors = Lex.content(request).filter { $0.contains(where: \.isNumber) }
+        // Words that signal new behavior for a thing the user said to keep as it is.
+        let addedBehavior: Set<String> = Set(([addition].compactMap { $0 } + [trigger].compactMap { $0 } + directives.filter { $0.kind == .limit }.map(\.unit)
+            + ["error", "retry", "attempt", "state", "counter", "count", "message", "indicator", "spinner", "status"]).map(Lex.stem))
 
-        func violation(_ item: String, suggestion: Bool, outcome: Bool = false) -> String? {
-            let words = Lex.words(item)
-            let protected = Lex.hasMarker(item)
-            // "Ensure 4xx is not retried and the progress UI reflects the error": a negation in one clause protects only that clause.
-            let fragments = item.replacingOccurrences(of: #"\s+(?:and|but|while|so that)\s+|[,;]\s*|\.\s+"#, with: "\u{1}", options: [.regularExpression, .caseInsensitive])
-                .split(separator: "\u{1}").map(String.init)
+        func check(_ clause: String, kind: ListKind) -> Finding? {
+            let words = Lex.words(clause)
+            let marked = Lex.hasMarker(clause)
+            let observing = Lex.isObservation(clause)
+            let hedged = Lex.isHedged(clause)
             for d in directives {
                 switch d.kind {
                 case .prohibit:
-                    // Doing the forbidden thing to the forbidden target, with nothing saying not to.
-                    for f in fragments where !Lex.hasMarker(f) {
-                        let w = Lex.words(f)
-                        if !d.verb.isEmpty, !d.object.isEmpty, Lex.mentions(w, d.verb), Lex.matchesObject(w, d) { return "contradicts \"\(d.clause)\"" }
+                    // The forbidden action on the forbidden target with nothing in the clause saying not to. Any role: even a test
+                    // must not assert that the forbidden thing happens.
+                    if !marked, !d.verb.isEmpty, !d.object.isEmpty, Lex.mentions(words, d.verb), Lex.matchesObject(words, d) {
+                        return Finding(severity: .delete, reason: "contradicts \"\(d.clause)\"")
                     }
                 case .preserve:
-                    for f in fragments where !d.object.isEmpty && !Lex.hasMarker(f) {
-                        let w = Lex.words(f)
-                        if Lex.changes(w, d) { return "changes something the request says to keep (\"\(d.clause)\")" }
-                        // A requirement or criterion that talks about a kept thing without saying it stays as is describes new behavior for it.
-                        if outcome, Lex.coverage(d.object, in: w) >= 1 { return "describes new behavior for something the request says to keep (\"\(d.clause)\")" }
+                    guard !marked, !d.object.isEmpty else { break }
+                    // Testing or reading a kept thing is fine; acting on it is not. The verb must come before what it acts on.
+                    if !observing, Lex.changesStructurally(words, d) { return Finding(severity: .delete, reason: "changes something the request says to keep (\"\(d.clause)\")") }
+                    // The kept thing must be the one receiving the new behavior ("Progress UI reflects retry status"), not merely used by it
+                    // ("CSV export is available with filters applied").
+                    if kind.isOutcome, Lex.coverage(d.object, in: words) >= 1,
+                       let objectAt = d.object.compactMap({ o in words.firstIndex(where: { Lex.same($0, o) }) }).min(),
+                       let addedAt = words.indices.first(where: { i in addedBehavior.contains { Lex.same($0, words[i]) } && !d.object.contains { Lex.same($0, words[i]) } }),
+                       objectAt < addedAt {
+                        return Finding(severity: .delete, reason: "describes new behavior for something the request says to keep (\"\(d.clause)\")")
                     }
                 case .limit:
-                    if let n = d.limit, Lex.same(Lex.stem(d.unit), "retry"), let wrong = Lex.conflictingCount(in: item, limit: n) { return "uses \(wrong) where the request limits it to \(n) \(d.unit)" }
+                    if let n = d.limit, Lex.same(Lex.stem(d.unit), "retry"), let wrong = Lex.conflictingCount(in: clause, limit: n) {
+                        let fixed = Lex.replacingConflictingCount(in: clause, limit: n, unit: d.unit)
+                        return Finding(severity: .rewrite(fixed), reason: "used \(wrong) where the request limits it to \(n) \(d.unit)")
+                    }
                 }
             }
-            if behaviorStems.contains(where: { Lex.mentions(words, $0) }) {
+            if behaviorStems.contains(where: { Lex.mentions(words, $0) }), !(hedged && kind == .suggestion) {
                 // "retry only on 5xx" turns a prohibition into a narrower rule the user never gave.
                 let exclusive = words.contains { ["only", "exclusively", "solely", "just"].contains($0) }
-                let novelStatus = Lex.statusClasses(in: item).filter { c in !requestWords.contains(c) }
-                if exclusive, !novelStatus.isEmpty { return "narrows the behavior to \(novelStatus.joined(separator: ", ")), which the request did not say" }
-                if exclusive, let trigger, !Lex.mentions(words, trigger) { return "restricts the behavior without covering \"\(trigger)\", which the request is about" }
-                if !suggestion, !novelStatus.isEmpty { return "states a rule for \(novelStatus.joined(separator: ", ")) that the request did not give" }
+                let novelStatus = Lex.statusClasses(in: clause).filter { !requestWords.contains($0) }
+                if exclusive, !novelStatus.isEmpty { return Finding(severity: .delete, reason: "narrows the behavior to \(novelStatus.joined(separator: ", ")), which the request did not say") }
+                if exclusive, !observing, let trigger, !Lex.mentions(words, trigger) { return Finding(severity: .delete, reason: "restricts the behavior without covering \"\(trigger)\", which the request is about") }
+                // "Retries occur only on timeout and network failures": exclusivity the user never gave, with a condition they never named.
+                if exclusive, kind.isOutcome, !marked, let at = words.firstIndex(where: { ["only", "exclusively", "solely", "just"].contains($0) }) {
+                    let novel = words[(at + 1)...].filter { w in !Lex.stop.contains(w) && w.count > 2 && !requestWords.contains { Lex.same($0, w) } }
+                    if !novel.isEmpty { return Finding(severity: .demote, reason: "adds an exclusive condition (\(novel.prefix(3).joined(separator: ", "))) that the request did not give") }
+                }
+                if kind.isOutcome, !novelStatus.isEmpty, !marked { return Finding(severity: .demote, reason: "states a rule for \(novelStatus.joined(separator: ", ")) that the request did not give") }
             }
-            // A scenario the user only asked to test must not get an invented expected outcome.
-            if !suggestion, !protected, let scenario = unstated.first(where: { Lex.coverage(Lex.content($0.name), in: words) >= 0.99 }),
-               Lex.prescribes(words), !Lex.observes(words), anchors.isEmpty || Lex.coverage(anchors, in: words) == 0 {
-                return "prescribes an outcome for the \"\(scenario.name)\" case, which the request only asks to test"
+            if !marked, anchors.isEmpty || Lex.coverage(anchors, in: words) == 0,
+               let scenario = unstated.first(where: { Lex.coverage(Lex.content($0.name), in: words) >= 0.99 }) {
+                if kind.isOutcome, Lex.prescribes(words, broad: true), !Lex.observes(words) {
+                    return Finding(severity: .delete, reason: "prescribes an outcome for the \"\(scenario.name)\" case, which the request only asks to test")
+                }
+                // Implementing a policy for the case, or a test that asserts a specific outcome for it, is also an invented decision.
+                if !kind.isOutcome {
+                    let assertsOutcome = observing && Lex.assertsConcreteOutcome(clause)
+                    if (!observing && Lex.prescribes(words, broad: false)) || assertsOutcome {
+                        return Finding(severity: .delete, reason: "prescribes an outcome for the \"\(scenario.name)\" case, which the request only asks to test")
+                    }
+                }
+            }
+            let invented = RequestAnalysis.technologies(in: clause).filter { !supportedTech.contains($0.lowercased()) }
+            if !invented.isEmpty {
+                return Finding(severity: .delete, reason: "introduces \(invented.joined(separator: ", ")), which neither the request nor the workspace mentions")
             }
             return nil
         }
 
-        var plan = original
-        var removed: [String] = []
-        func filter(_ items: [String], suggestion: Bool = false, outcome: Bool = false) -> [String] {
-            items.filter { item in
-                guard let reason = violation(item, suggestion: suggestion, outcome: outcome) else { return true }
-                removed.append("\(item) (\(reason))")
-                return false
+        var corrections: [Correction] = []
+        var demoted: [String] = []
+
+        /// Returns the item with offending clauses removed or rewritten; nil when nothing is left.
+        func process(_ item: String, kind: ListKind, listName: String) -> String? {
+            let pieces = Clause.split(item)
+            var kept: [Clause] = []
+            var changed = false
+            var previousWasInventedPolicy = false
+            for var piece in pieces {
+                var finding = check(piece.text, kind: kind)
+                // "queue and retry when the network returns": once the first half is removed, the second half is a dangling
+                // part of the same invented policy.
+                if finding == nil, previousWasInventedPolicy, !piece.lead.hasPrefix(". "), Lex.prescribes(Lex.words(piece.text), broad: false) {
+                    finding = Finding(severity: .delete, reason: "continues a behavior the request did not ask for")
+                }
+                previousWasInventedPolicy = finding.map { $0.reason.hasPrefix("prescribes an outcome") || $0.reason.hasPrefix("continues") } ?? false
+                guard let finding else { kept.append(piece); continue }
+                changed = true
+                switch finding.severity {
+                case .rewrite(let text):
+                    corrections.append(Correction(list: listName, original: item, clause: piece.text, action: .rewritten, reason: finding.reason))
+                    piece.text = text; kept.append(piece)
+                case .demote:
+                    corrections.append(Correction(list: listName, original: item, clause: piece.text, action: .demoted, reason: finding.reason))
+                    demoted.append(piece.text)
+                case .delete:
+                    corrections.append(Correction(list: listName, original: item, clause: piece.text, action: .removed, reason: finding.reason))
+                }
             }
+            guard changed else { return item }
+            return Clause.join(kept, original: item)
         }
-        if violation(plan.objective, suggestion: false) != nil {
-            removed.append("objective: \(plan.objective)")
-            plan.objective = analysis.text.count <= 220 ? analysis.text : analysis.intent
+        func processList(_ items: [String], kind: ListKind, listName: String) -> [String] { items.compactMap { process($0, kind: kind, listName: listName) } }
+
+        var plan = original
+        if let objective = process(plan.objective, kind: .objective, listName: "objective") { plan.objective = objective }
+        else { plan.objective = analysis.text.count <= 220 ? analysis.text : analysis.intent }
+        plan.confirmedRequirements = processList(plan.confirmedRequirements, kind: .requirement, listName: "requirements")
+        plan.constraints = processList(plan.constraints, kind: .constraint, listName: "constraints")
+        plan.suggestedDecisions = processList(plan.suggestedDecisions, kind: .suggestion, listName: "suggestions")
+        plan.successCriteria = processList(plan.successCriteria, kind: .criterion, listName: "criteria")
+        plan.verificationSteps = processList(plan.verificationSteps, kind: .verification, listName: "verification")
+        plan.suggestedDecisions += demoted.filter { d in !plan.suggestedDecisions.contains { $0.caseInsensitiveCompare(d) == .orderedSame } }
+
+        // Tasks: correct the title and detail separately. A task disappears only when nothing valid is left in it, and
+        // the tasks that depended on it inherit its own dependencies so the order stays coherent.
+        var tasks: [ModelPlan.Task] = []
+        var dropped: [String: [String]] = [:]
+        for var task in plan.tasks {
+            let title = process(task.title, kind: .task, listName: "tasks")
+            let detail = task.detail.isEmpty ? "" : (process(task.detail, kind: .task, listName: "tasks") ?? "")
+            switch (title, detail.isEmpty) {
+            case (let t?, _): task.title = t; task.detail = detail
+            case (nil, false):
+                // The title was the offending part; the detail still describes valid work.
+                let pieces = Clause.split(detail)
+                task.title = pieces.first.map { Clause.join([$0], original: $0.text) ?? $0.text } ?? detail
+                task.detail = pieces.count > 1 ? Clause.join(Array(pieces.dropFirst()), original: detail) ?? "" : ""
+            default:
+                dropped[task.id] = task.dependsOn
+                continue
+            }
+            tasks.append(task)
         }
-        plan.confirmedRequirements = filter(plan.confirmedRequirements, outcome: true)
-        plan.constraints = filter(plan.constraints)
-        plan.suggestedDecisions = filter(plan.suggestedDecisions, suggestion: true)
-        plan.successCriteria = filter(plan.successCriteria, outcome: true)
-        plan.verificationSteps = filter(plan.verificationSteps)
-        var droppedTasks = Set<String>()
-        for task in plan.tasks {
-            if let reason = violation(task.title + " " + task.detail, suggestion: false) { droppedTasks.insert(task.id); removed.append("task \"\(task.title)\" (\(reason))") }
+        if !dropped.isEmpty {
+            func resolve(_ ids: [String], _ seen: Set<String> = []) -> [String] {
+                ids.flatMap { id -> [String] in dropped[id].map { seen.contains(id) ? [] : resolve($0, seen.union([id])) } ?? [id] }
+            }
+            tasks = tasks.map { t in var t = t; var seen = Set<String>(); t.dependsOn = resolve(t.dependsOn).filter { $0 != t.id && seen.insert($0).inserted }; return t }
         }
-        plan.tasks = plan.tasks.filter { !droppedTasks.contains($0.id) }.map { task in
-            var t = task; t.dependsOn.removeAll { droppedTasks.contains($0) }; return t
-        }
-        guard !removed.isEmpty else { return (plan, []) }
-        return (plan, ["Removed \(removed.count) generated item\(removed.count == 1 ? "" : "s") that conflicted with the request: " + removed.prefix(2).joined(separator: "; ") + "."])
+        plan.tasks = tasks
+        return (plan, corrections)
     }
 
     // MARK: Completion of the final plan
@@ -232,7 +339,7 @@ public enum SemanticValidator {
             let criterion: String
             switch d.kind {
             case .prohibit:
-                criterion = "Confirmed by a test or inspection: \(d.clause.prefix(1).lowercased() + d.clause.dropFirst())."
+                criterion = "In exercised cases, the code does not \(d.verb) \(object)."
             case .preserve:
                 if Lex.isInterface(d.object) {
                     criterion = "Unchanged contract: \(object) keeps its existing signature and behavior; only the internal implementation may change."
@@ -258,6 +365,12 @@ public enum SemanticValidator {
 
         let scenarios = testScenarios(in: request)
         if !scenarios.isEmpty {
+            // "Test timeout, offline and permanent failure cases" as a requirement repeats the verification steps written below.
+            let nameTokens = scenarios.flatMap { Lex.content($0.name) }
+            plan.confirmedRequirements.removeAll { r in
+                let w = Lex.content(r)
+                return Lex.isObservation(r) && Lex.coverage(nameTokens, in: w) >= 1 && Double(w.count) <= Double(nameTokens.count) + 3
+            }
             let scenarioWords = scenarios.flatMap { Lex.content($0.name) }
             let kept = plan.verificationInstructions.filter { Lex.coverage(scenarioWords, in: Lex.content($0)) == 0 && !Lex.prescribes(Lex.words($0)) }
             var steps = scenarios.map { s -> String in
@@ -279,12 +392,26 @@ public enum SemanticValidator {
         }
 
         if plan.codeReferences.isEmpty, !plan.tasks.isEmpty, [.bugfix, .feature, .performance, .refactor, .ui].contains(plan.taskType) {
-            let locating = ["locate", "find", "identify", "inspect", "read", "trace", "review", "reproduce", "investigate", "audit", "survey", "search", "check", "examine", "look"]
+            let locating = ["locate", "find", "identify", "inspect", "read", "review", "audit", "survey", "examine", "map"]
             if !plan.tasks.contains(where: { t in locating.contains { t.title.lowercased().hasPrefix($0) } }) {
                 plan.tasks.insert(PlanTask(id: "t0", title: "Locate the code that implements this",
                                            detail: "No file has been confirmed as relevant; find the real implementation before changing anything."), at: 0)
             }
         }
+
+        // A request that asks to keep something unchanged and also to add to it contradicts itself; ask instead of choosing.
+        for d in directives where d.kind == .preserve && !d.object.isEmpty {
+            let conflicting = clauses(request).first { c in
+                parse(c).isEmpty && !Lex.isObservation(c) && Lex.changesStructurally(Lex.words(c), d)
+            }
+            if let c = conflicting {
+                let question = "The request says \"\(d.clause)\" but also \"\(c)\". Which should take priority?"
+                if !plan.missingInformation.contains(question) { plan.missingInformation.append(question) }
+            }
+        }
+
+        // Details the agent can find in the repository are investigation hints, not questions for the user.
+        for hint in RequirementChecklist.discoverable(for: analysis).prefix(2) where !plan.suggestedDecisions.contains(hint) { plan.suggestedDecisions.append(hint) }
 
         if definitions { plan.terminology = Definitions.notes(for: request).nilIfEmptyList }
     }
@@ -299,7 +426,7 @@ extension Array where Element == String {
 enum Lex {
     static let stop: Set<String> = ["the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "with", "current", "existing", "same", "this", "that", "any", "all",
                                      "it", "its", "be", "is", "are", "as", "not", "when", "from", "by", "at", "so", "if", "than", "then", "also", "into", "should", "must", "will", "can"]
-    static let changeVerbs = ["change", "modify", "alter", "touch", "break", "rename", "edit", "rewrite", "redesign", "replace", "restructure", "move"]
+    static let changeVerbs = ["change", "modify", "alter", "touch", "break", "rename", "edit", "rewrite", "redesign", "replace", "restructure", "move", "mess", "screw", "ruin", "wreck"]
     static let introduceVerbs = ["add", "introduce", "display", "show", "update", "change", "modify", "alter", "redesign", "replace", "rename", "remove", "expose", "extend",
                                   "surface", "render", "rewrite", "adjust", "indicate", "create", "insert", "include", "swap", "reorder", "reflect", "track", "animate", "highlight", "increment", "count"]
     static let visibleThings = ["display", "show", "banner", "toast", "counter", "badge", "label", "indicator", "message", "spinner", "text", "animation", "alert", "notify", "notification", "popup"]
@@ -309,7 +436,8 @@ enum Lex {
     static let observingWords = ["observe", "report", "record", "document", "verify", "test", "exercise", "run", "cover", "inspect", "check", "measure", "assert", "determine"]
 
     static func words(_ s: String) -> [String] {
-        s.lowercased().replacingOccurrences(of: "[’']", with: "", options: .regularExpression)
+        s.lowercased().replacingOccurrences(of: #"\btime[sd]?\s+out\b"#, with: "timeout", options: .regularExpression)
+            .replacingOccurrences(of: "[’']", with: "", options: .regularExpression)
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map { stem(String($0)) }
     }
 
@@ -326,7 +454,7 @@ enum Lex {
 
     static func same(_ a: String, _ b: String) -> Bool {
         let x = stem(a), y = stem(b)
-        if x == y { return true }
+        if x == y || x + "e" == y || y + "e" == x { return true }
         let shortest = min(x.count, y.count)
         guard shortest >= 5 else { return false }
         return zip(x, y).prefix(while: { $0 == $1 }).count >= shortest - 1
@@ -362,7 +490,78 @@ enum Lex {
         item.range(of: #"(?i)\b(?:not|never|no|without|avoid|unchanged|preserve[sd]?|keep|kept|remain[s]?|stay[s]?|still|intact|continues?|non|except|excluding|besides|skip(?:s|ping)?)\b|n['’]t\b|as before|as is|other than|rather than|instead of"#, options: .regularExpression) != nil
     }
 
-    static func prescribes(_ words: [String]) -> Bool { prescribingWords.contains { mentions(words, $0) } }
+    static let concreteOutcomeWords = ["retry", "retried", "succeed", "queue", "show", "display", "return", "throw", "block", "disable", "resume", "abort", "cancel"]
+    static let vagueOutcomeWords = ["should", "must", "always", "never", "handled", "handle", "correctly", "gracefully", "recover", "recovers", "automatically"]
+    static let observeLeads = ["test", "verify", "check", "assert", "validate", "confirm", "cover", "exercise", "run", "observe", "inspect", "review", "read", "examine", "trace", "reproduce",
+                               "investigate", "log", "measure", "report", "document", "list", "identify", "locate", "find", "audit", "search", "compare", "determine", "simulate", "mock", "look", "understand", "map"]
+    static let verbLexicon: Set<String> = Set(introduceVerbs + observeLeads + ["implement", "make", "ensure", "handle", "use", "keep", "allow", "retry", "return", "throw", "show", "log", "create", "wrap",
+        "extract", "move", "convert", "replace", "apply", "define", "set", "store", "send", "fetch", "call", "build", "support", "enable", "disable", "prevent", "avoid", "treat", "classify",
+        "distinguish", "differentiate", "respect", "limit", "cap", "stop", "resume", "queue", "cancel", "preserve", "maintain", "reuse", "write", "refactor", "fix", "wire", "introduce", "do", "be"])
+
+    /// Concrete outcomes always count; vague "handled correctly" wording counts only when `broad`.
+    static func prescribes(_ words: [String], broad: Bool = true) -> Bool {
+        (concreteOutcomeWords + (broad ? vagueOutcomeWords : [])).contains { mentions(words, $0) }
+    }
+
+    /// A clause about testing or reading code: it observes behavior rather than implementing it.
+    static func isObservation(_ clause: String) -> Bool {
+        let w = words(clause).filter { !["then", "also", "first", "finally", "next", "and", "please", "now", "additionally", "plus"].contains($0) }
+        guard let lead = w.first else { return false }
+        if observeLeads.contains(where: { same($0, lead) }) { return true }
+        let testWords = ["test", "spec", "coverage", "assertion", "scenario", "unit"]
+        return ["add", "write", "create", "extend", "ensure", "make", "include", "cover"].contains(where: { same($0, lead) }) && w.dropFirst().prefix(5).contains { t in testWords.contains { same($0, t) } }
+    }
+
+    static func isHedged(_ clause: String) -> Bool {
+        clause.range(of: #"(?i)\b(?:consider|optional(?:ly)?|could|may|might|perhaps|possibly|if needed|if appropriate|for example|for instance|such as|can also|you can)\b|e\.g\."#, options: .regularExpression) != nil
+    }
+
+    /// "…so that X is retried": a test clause that asserts a specific outcome.
+    static func assertsConcreteOutcome(_ clause: String) -> Bool {
+        guard let m = clause.captures(#"\b(?:that|to ensure|ensuring|ensure|confirm(?:ing)?|so that)\b(.*)$"#) else { return false }
+        let tail = words(m[1])
+        return concreteOutcomeWords.contains { mentions(tail, $0) }
+    }
+
+    /// Words that start a new relative or adverbial phrase, so a verb before them no longer acts on what comes after them.
+    static let phraseBreakers: Set<String> = ["that", "which", "using", "uses", "use", "with", "while", "because", "when", "where", "by", "via", "from", "based", "respecting",
+                                              "honoring", "preserving", "keeping", "retaining", "maintaining", "following", "reusing", "without", "unless", "if"]
+
+    /// An introducing or altering verb that directly acts on the kept thing: the object follows the verb with only articles,
+    /// adjectives and prepositions in between. "Create an endpoint that uses the current filters" uses them; it does not change them.
+    static func changesStructurally(_ words: [String], _ d: SemanticValidator.Directive) -> Bool {
+        let verbIndexes = words.indices.filter { i in introduceVerbs.contains { same($0, words[i]) } }
+        guard !verbIndexes.isEmpty else { return false }
+        func governed(from v: Int, to target: Int) -> Bool {
+            !words[(v + 1)..<target].contains { w in phraseBreakers.contains(w) || introduceVerbs.contains { same($0, w) } }
+        }
+        for v in verbIndexes {
+            let objectAt = d.object.compactMap { o in words.indices.first(where: { $0 > v && same(words[$0], o) }) }
+            if objectAt.count == d.object.count, let first = objectAt.min(), governed(from: v, to: first) { return true }
+        }
+        let ui = d.object.contains { o in interfaceWords.contains { same($0, o) } }
+        guard ui, coverage(d.object, in: words) >= 0.5 else { return false }
+        return verbIndexes.contains { v in words.indices.contains { i in i > v && visibleThings.contains { same($0, words[i]) } && governed(from: v, to: i) } }
+    }
+
+    /// Replaces a retry or attempt count that contradicts the limit with the limit the user gave.
+    static func replacingConflictingCount(in text: String, limit: Int, unit: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"(?i)\b(\d+)\s*(retries|retry|attempts?|tries|times)\b"#) else { return text }
+        var out = text
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let whole = Range(m.range, in: out), let n = Range(m.range(at: 1), in: text).flatMap({ Int(text[$0]) }),
+                  let noun = Range(m.range(at: 2), in: text).map({ text[$0].lowercased() }) else { continue }
+            let isRetry = noun.hasPrefix("retr") || (noun == "times" && text.lowercased().contains("retr"))
+            guard isRetry ? n != limit : (n != limit && n != limit + 1) else { continue }
+            // Keep the wording the sentence used: "3 times" -> "2 times", "5 attempts" -> "3 attempts", "3 retries" -> "2 retries".
+            let fixed: String
+            if noun == "times" { fixed = "\(limit) times" }
+            else if noun.hasPrefix("retr") { fixed = "\(limit) \(limit == 1 ? "retry" : "retries")" }
+            else { fixed = "\(limit + 1) \(noun)" }
+            out.replaceSubrange(whole, with: fixed)
+        }
+        return out
+    }
     static func observes(_ words: [String]) -> Bool { observingWords.contains { mentions(words, $0) } }
 
     /// HTTP status classes and codes in a text, such as "5xx" or "503".
@@ -419,8 +618,8 @@ enum Definitions {
         if has(#"\bauth(?:entication|enticate|orization|orize)?\b|\blogin\b|\bsign.?in\b"#) {
             out.append("Authentication establishes who the caller is. Authorization decides what they may do. Keep them separate and change only the one the request names.")
         }
-        if has(#"\blatency\b|\bthroughput\b|\bfaster\b|\bspeed up\b"#) {
-            out.append("Latency is the time one operation takes; throughput is how many complete per unit of time. Say which one is being improved and measure it before and after.")
+        if has(#"\blatency\b|\bthroughput\b"#) {
+            out.append("Latency is the duration of one operation; throughput is the number completed per unit of time. Measure the metric named in the request.")
         }
         if has(#"\brefactor"#) {
             out.append("A refactor changes structure without changing observable behavior, so the existing tests should pass unchanged.")
@@ -430,5 +629,58 @@ enum Definitions {
         }
         var seen = Set<String>()
         return Array(out.filter { seen.insert($0).inserted }.prefix(5))
+    }
+}
+
+
+// MARK: - Clauses
+
+/// A piece of a generated sentence, split where a new verb phrase begins, so one bad clause can be fixed without losing the rest.
+struct Clause: Equatable {
+    var text: String
+    /// The separator that preceded it in the original ("; ", ", and ", " and ").
+    var lead: String
+
+    static func split(_ item: String) -> [Clause] {
+        let text = item.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let re = try? NSRegularExpression(pattern: #";\s*|(?<=[.!?])\s+(?=[A-Za-z])|,\s*(?:and\s+|then\s+|but\s+)?|\s+(?:and|then|while|but|so that)\s+"#, options: [.caseInsensitive]) else { return [Clause(text: text, lead: "")] }
+        var out: [Clause] = []
+        var start = text.startIndex
+        var lead = ""
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let r = Range(m.range, in: text) else { continue }
+            let rest = text[r.upperBound...]
+            let next = rest.prefix { $0.isLetter || $0.isNumber || $0 == "'" }.lowercased()
+            let sentenceBreak = text[r].first.map { $0.isWhitespace } == true && r.lowerBound > text.startIndex && ".!?".contains(text[text.index(before: r.lowerBound)])
+            let semicolon = text[r].hasPrefix(";")
+            guard sentenceBreak || semicolon || startsVerbPhrase(next) else { continue }
+            let piece = text[start..<r.lowerBound].trimmingCharacters(in: .whitespaces)
+            if !piece.isEmpty { out.append(Clause(text: piece, lead: lead)) }
+            lead = String(text[r]); start = r.upperBound
+        }
+        let tail = text[start...].trimmingCharacters(in: .whitespaces)
+        if !tail.isEmpty { out.append(Clause(text: tail, lead: lead)) }
+        return out.isEmpty ? [Clause(text: text, lead: "")] : out
+    }
+
+    static func startsVerbPhrase(_ word: String) -> Bool {
+        guard !word.isEmpty else { return false }
+        if ["also", "additionally", "plus", "finally", "next", "first"].contains(word) { return true }
+        return Lex.verbLexicon.contains { Lex.same($0, word) } || (word.hasSuffix("ing") && word.count > 4)
+    }
+
+    /// Reassembles the kept clauses; nil when none remain.
+    static func join(_ kept: [Clause], original: String) -> String? {
+        guard !kept.isEmpty else { return nil }
+        var out = ""
+        for (i, c) in kept.enumerated() {
+            var text = c.text.trimmingCharacters(in: CharacterSet(charactersIn: " ;,"))
+            if i == 0 { if original.first?.isUppercase == true { text = text.prefix(1).uppercased() + text.dropFirst() } }
+            else { out += c.lead.isEmpty ? " " : c.lead }
+            out += text
+        }
+        let trimmed = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix("."), !out.hasSuffix(".") { out += "." }
+        return out
     }
 }
