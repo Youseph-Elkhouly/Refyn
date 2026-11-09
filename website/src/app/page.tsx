@@ -18,6 +18,7 @@ const structuredData = {
   applicationCategory: "DeveloperApplication",
   operatingSystem: "macOS 14 or later",
   url: site.url,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
 export default function Home() {

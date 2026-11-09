@@ -1,6 +1,6 @@
 import { DownloadButton } from "./CallToAction";
 
-const requirements = ["macOS 14 or later", "Apple Silicon", "About 8 GB of free memory recommended", "2.3 GB model download on first setup"];
+const requirements = ["Free to use", "macOS 14 or later", "Apple Silicon", "About 8 GB of free memory recommended", "2.3 GB model download on first setup"];
 
 /** The closing call to action is the notch at full size, inverted: flat top, rounded bottom, hung from a hairline. */
 export function DownloadSection() {

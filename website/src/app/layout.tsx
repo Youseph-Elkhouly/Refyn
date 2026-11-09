@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   title: site.title,
   description: site.description,
   applicationName: site.name,
-  keywords: ["AI prompt optimizer", "macOS", "MacBook notch", "Claude Code", "Codex", "coding agents", "local AI"],
+  keywords: ["free AI prompt optimizer", "AI prompt optimizer", "macOS", "MacBook notch", "Claude Code", "Codex", "coding agents", "local AI"],
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
