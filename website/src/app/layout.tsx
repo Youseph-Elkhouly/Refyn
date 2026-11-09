@@ -1,9 +1,17 @@
 import type { Metadata, Viewport } from "next";
+import { Instrument_Serif } from "next/font/google";
 
 import { MotionRoot } from "@/components/site/MotionRoot";
 import { site } from "@/lib/site";
 
 import "./globals.css";
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument-serif",
+  subsets: ["latin"],
+  weight: "400",
+  style: "italic",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
@@ -27,13 +35,13 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#ffffff",
-  colorScheme: "light",
+  themeColor: "#000000",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={instrumentSerif.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: "document.documentElement.classList.add('js')" }} />
       </head>

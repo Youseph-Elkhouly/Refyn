@@ -12,7 +12,7 @@ const tabs: readonly ResultTab[] = ["Prompt", "Plan"];
 /** The expanded app, laid out from the same measurements as ExpandedPanelView, ComposerView and ResultView. */
 export function RefynPanel({ demo, isInteractive }: { demo: RefynDemo; isInteractive: boolean }) {
   return (
-    <div className="@container flex h-full flex-col text-black">
+    <div className="app-light @container flex h-full flex-col text-black">
       <header className="flex h-11 shrink-0 items-center gap-2 px-3.5">
         <span className="inline-flex items-center gap-[7px] text-[15px] font-semibold">
           <RefynMark size={12} />

@@ -14,6 +14,6 @@ export const surfaceColorToNotch = { duration: 0.2, delay: 0.08, ease: "easeIn" 
 export const instant = { duration: 0 } as const;
 
 export const surfaceShadow = {
-  panel: "0px 0px 0px 1px rgba(229,229,229,1), 0px 10px 32px 0px rgba(0,0,0,0.18)",
-  notch: "0px 0px 0px 0px rgba(229,229,229,0), 0px 0px 0px 0px rgba(0,0,0,0)",
+  panel: "0px 0px 0px 1px rgba(255,255,255,0.14), 0px 14px 44px 0px rgba(0,0,0,0.6)",
+  notch: "0px 0px 0px 0px rgba(255,255,255,0), 0px 0px 0px 0px rgba(0,0,0,0)",
 };

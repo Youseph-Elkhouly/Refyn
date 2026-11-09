@@ -7,7 +7,7 @@ export const contentType = "image/png";
 export default function OpenGraphImage() {
   return new ImageResponse(
     (
-      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: "#fff", color: "#111", padding: "0 72px", position: "relative" }}>
+      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: "#000", color: "#fff", padding: "0 72px", position: "relative" }}>
         <div
           style={{
             position: "absolute",
@@ -19,21 +19,21 @@ export default function OpenGraphImage() {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 26px",
-            background: "#000",
+            background: "#fff",
             borderBottomLeftRadius: 22,
             borderBottomRightRadius: 22,
           }}
         >
-          <div style={{ width: 24, height: 24, borderRadius: 24, border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ width: 8, height: 8, borderRadius: 8, background: "#fff" }} />
+          <div style={{ width: 24, height: 24, borderRadius: 24, border: "3px solid #000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 8, height: 8, borderRadius: 8, background: "#000" }} />
           </div>
-          <div style={{ width: 11, height: 11, borderRadius: 11, background: "#fff" }} />
+          <div style={{ width: 11, height: 11, borderRadius: 11, background: "#000" }} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", marginTop: 190, fontSize: 118, fontWeight: 700, letterSpacing: -5, lineHeight: 1 }}>
-          <span style={{ color: "#737373" }}>Better prompts.</span>
+          <span style={{ color: "#8c8c8c" }}>Better prompts.</span>
           <span>Better results.</span>
         </div>
-        <div style={{ display: "flex", marginTop: 36, fontSize: 34, color: "#737373", letterSpacing: -0.6 }}>The AI prompt optimizer that lives in your Mac&apos;s notch.</div>
+        <div style={{ display: "flex", marginTop: 36, fontSize: 34, color: "#8c8c8c", letterSpacing: -0.6 }}>The AI prompt optimizer that lives in your Mac&apos;s notch.</div>
       </div>
     ),
     size,

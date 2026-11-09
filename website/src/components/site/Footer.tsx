@@ -3,7 +3,7 @@ import { site } from "@/lib/site";
 
 export function Footer() {
   return (
-    <footer className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-3 px-5 py-9 text-[14px] text-muted lg:px-10">
+    <footer className="mx-auto flex max-w-[1120px] flex-wrap items-center justify-between gap-3 px-5 py-9 text-[14px] text-muted">
       <span className="inline-flex items-center gap-2 font-medium text-ink">
         <RefynMark size={12} />
         Refyn

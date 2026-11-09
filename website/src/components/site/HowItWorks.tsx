@@ -6,7 +6,7 @@ import { Chip, RButton } from "@/components/refyn/primitives";
 const step = (ms: number) => ({ "--step": `${ms}ms` }) as CSSProperties;
 
 function PreviewFrame({ children }: { children: ReactNode }) {
-  return <div className="flex h-[226px] flex-col overflow-hidden rounded-[18px] border border-line bg-white">{children}</div>;
+  return <div className="app-light flex h-[226px] flex-col overflow-hidden rounded-[16px] bg-white text-black">{children}</div>;
 }
 
 function WritePreview() {
@@ -61,14 +61,14 @@ function RefinePreview() {
 function ShipPreview() {
   return (
     <PreviewFrame>
-      <div className="flex h-11 items-center justify-between border-b border-line px-4">
+      <div className="flex h-11 items-center justify-between px-4">
         <span className="text-[12px] text-secondary">For Claude Code</span>
         <span className="step-in inline-flex items-center gap-1 text-[12px] font-medium" style={step(2150)}>
           <CheckIcon size={12} />
           Copied
         </span>
       </div>
-      <div className="flex-1 bg-[#141414] p-4 font-mono text-[12px] leading-[20px] text-[#d4d4d4]">
+      <div className="flex-1 bg-[#111111] p-4 font-mono text-[12px] leading-[20px] text-[#d4d4d4]">
         <div className="text-[#8a8a8a]">Agent ready.</div>
         <div className="step-in mt-2" style={step(2500)}>
           <span className="text-white">&gt;</span> ## Objective
@@ -81,7 +81,7 @@ function ShipPreview() {
 }
 
 const steps = [
-  { title: "Write anything.", body: "Enter a rough prompt directly into Refyn. Typos and half-thoughts are fine.", preview: <WritePreview /> },
+  { title: "Write anything.", body: "Enter a rough prompt directly into Refyn.", preview: <WritePreview /> },
   { title: "Refyn it.", body: "Let the local AI improve clarity, structure, and technical specificity.", preview: <RefinePreview /> },
   { title: "Ship faster.", body: "Copy the optimized prompt into your favorite coding agent.", preview: <ShipPreview /> },
 ];
@@ -91,16 +91,12 @@ export function HowItWorks() {
     <ol className="reveal grid gap-10 md:grid-cols-3 md:gap-5">
       {steps.map(({ title, body, preview }, index) => (
         <li key={title}>
-          {preview}
-          <div className="mt-5 flex gap-3">
-            <span className="pt-[3px] text-[15px] font-medium text-muted tabular-nums" aria-hidden="true">
-              {index + 1}
-            </span>
-            <div>
-              <h3 className="text-[22px] leading-[1.2] font-semibold tracking-[-0.025em]">{title}</h3>
-              <p className="mt-1.5 max-w-[22rem] text-[16px] leading-[1.45] tracking-[-0.008em] text-muted">{body}</p>
-            </div>
+          <div aria-hidden="true" className="font-display mb-3 text-[52px] leading-none text-muted italic">
+            {index + 1}
           </div>
+          {preview}
+          <h3 className="mt-5 text-[20px] font-semibold">{title}</h3>
+          <p className="mt-1.5 max-w-[22rem] text-[16px] leading-[1.5] text-muted">{body}</p>
         </li>
       ))}
     </ol>

@@ -46,7 +46,7 @@ export function MacScreen({
   return (
     <div
       ref={ref}
-      className="absolute inset-0 overflow-hidden bg-[#e4e4e4]"
+      className="absolute inset-0 overflow-hidden bg-[#161616]"
       onPointerDown={(event) => {
         if (isInteractive && demo.isOpen && !(event.target as Element).closest("[data-notch-surface]")) demo.close();
       }}
@@ -69,7 +69,7 @@ export function MacScreen({
 function NotchHint({ top, children }: { top: number; children: ReactNode }) {
   return (
     <div
-      className="pointer-events-none absolute left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[12px] font-medium whitespace-nowrap text-black shadow-[0_1px_3px_rgba(0,0,0,0.14)]"
+      className="pointer-events-none absolute left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[12px] font-medium whitespace-nowrap text-black shadow-[0_2px_10px_rgba(0,0,0,0.5)]"
       style={{ top }}
     >
       <ArrowUpIcon size={11} />
@@ -81,15 +81,15 @@ function NotchHint({ top, children }: { top: number; children: ReactNode }) {
 function Wallpaper() {
   return (
     <svg aria-hidden="true" className="absolute inset-0 size-full" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid slice" fill="none">
-      <circle cx="780" cy="470" r="330" stroke="#d9d9d9" strokeWidth="58" />
-      <circle cx="780" cy="470" r="118" fill="#d9d9d9" />
+      <circle cx="780" cy="470" r="330" stroke="#1f1f1f" strokeWidth="58" />
+      <circle cx="780" cy="470" r="118" fill="#1f1f1f" />
     </svg>
   );
 }
 
 function MenuBar({ height }: { height: number }) {
   return (
-    <div aria-hidden="true" className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-white/55 px-3.5 text-[12.5px] text-black" style={{ height }}>
+    <div aria-hidden="true" className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-white/[0.08] px-3.5 text-[12.5px] text-white" style={{ height }}>
       <div className="flex items-center gap-4">
         <span className="font-semibold">Terminal</span>
         <span className="hidden gap-4 lg:flex">
@@ -121,7 +121,7 @@ function TerminalWindow({ isPasted }: { isPasted: boolean }) {
   return (
     <div
       aria-hidden="true"
-      className="absolute bottom-[7%] left-1/2 h-[46%] min-h-[240px] w-[min(92%,760px)] -translate-x-1/2 overflow-hidden rounded-[11px] bg-[#141414] font-mono text-[12px] leading-[19px] text-[#d4d4d4] shadow-[0_0_0_1px_rgba(0,0,0,0.4),0_22px_60px_rgba(0,0,0,0.28)]"
+      className="absolute bottom-[7%] left-1/2 h-[46%] min-h-[240px] w-[min(92%,760px)] -translate-x-1/2 overflow-hidden rounded-[11px] bg-[#0a0a0a] font-mono text-[12px] leading-[19px] text-[#d4d4d4] shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_22px_60px_rgba(0,0,0,0.6)]"
     >
       <div className="relative flex h-8 items-center gap-2 border-b border-white/[0.07] px-3">
         <span className="size-3 rounded-full bg-white/[0.16]" />

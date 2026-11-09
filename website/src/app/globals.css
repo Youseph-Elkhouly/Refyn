@@ -1,13 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #111111;
-  --color-muted: #737373;
-  --color-secondary: #666666;
-  --color-line: #e5e5e5;
-  --color-surface: #f7f7f7;
-  --color-hover: #efefef;
+  --color-ink: #ffffff;
+  --color-muted: #8c8c8c;
+  --color-secondary: #a8a8a8;
+  --color-line: #242424;
+  --color-surface: #0d0d0d;
+  --color-hover: #181818;
 
+  --font-display: var(--font-instrument-serif), "Iowan Old Style", Georgia, serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto,
     Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -19,18 +20,18 @@
 
 @layer base {
   html {
-    background: #ffffff;
+    background: #000000;
     color: var(--color-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     scroll-behavior: smooth;
-    scroll-padding-top: 48px;
+    scroll-padding-top: 72px;
   }
 
   body {
-    background: #ffffff;
+    background: #000000;
     overflow-x: clip;
   }
 
@@ -46,6 +47,20 @@
   button:disabled {
     cursor: default;
   }
+}
+
+/* Refyn's own interface is white on the black page. Everything inside it uses the app's light tokens. */
+.app-light {
+  --color-ink: #111111;
+  --color-muted: #737373;
+  --color-secondary: #666666;
+  --color-line: #e5e5e5;
+  --color-surface: #f7f7f7;
+  --color-hover: #efefef;
+}
+
+.app-light :focus-visible {
+  outline-color: #000000;
 }
 
 /* The notch is black, so its focus ring has to be white. */

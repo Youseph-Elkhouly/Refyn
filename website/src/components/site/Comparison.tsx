@@ -44,7 +44,7 @@ export function Comparison() {
               tabIndex={isActive ? 0 : -1}
               onClick={() => select(index)}
               className={`h-9 shrink-0 rounded-[10px] px-3.5 text-[14px] font-medium whitespace-nowrap transition-colors duration-200 ${
-                isActive ? "bg-ink text-white" : "text-muted hover:bg-surface hover:text-ink"
+                isActive ? "bg-white text-black" : "text-muted hover:bg-hover hover:text-ink"
               }`}
             >
               {example.label}
@@ -65,10 +65,10 @@ export function Comparison() {
               aria-labelledby={`${baseId}-tab-${example.id}`}
               className={`col-start-1 row-start-1 grid transition-[opacity,visibility] duration-[220ms] lg:grid-cols-[5fr_7fr] ${isActive ? "visible opacity-100" : "invisible opacity-0"}`}
             >
-              <div className="flex flex-col bg-surface p-6 lg:p-9">
+              <div className="flex flex-col p-6 lg:p-9">
                 <h3 className="text-[13px] font-medium text-muted">Before Refyn</h3>
                 <p
-                  className={`mt-5 text-[clamp(1.5rem,2.5vw,2.125rem)] leading-[1.18] font-medium tracking-[-0.03em] transition-transform duration-[250ms] ease-[var(--ease-native)] motion-reduce:transform-none ${isActive ? "" : "translate-y-1.5"}`}
+                  className={`mt-5 font-display text-[clamp(1.875rem,3.1vw,2.625rem)] leading-[1.14] italic transition-transform duration-[250ms] ease-[var(--ease-native)] motion-reduce:transform-none ${isActive ? "" : "translate-y-1.5"}`}
                 >
                   {example.before}
                 </p>
@@ -81,7 +81,7 @@ export function Comparison() {
                   </ul>
                 </div>
               </div>
-              <div className="border-t border-line p-6 lg:border-t-0 lg:border-l lg:p-9">
+              <div className="app-light bg-white p-6 text-black lg:p-9">
                 <h3 className="text-[13px] font-medium text-muted">After Refyn</h3>
                 <PromptView
                   doc={example.after}
