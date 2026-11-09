@@ -401,3 +401,15 @@ id, "v1"); the app reuses a cached **model-built** plan for identical inputs.
 - `ModelOutput.jsonObject` closes slipped brackets (`..."}` for `..."]}`, `"}}`): fallbacks on 15 moderate runs went 3/15 (before) -> 8/15 (after the prompt change) -> 0/15 (with repair).
 - Evals: `SemanticEvaluationTests` (REFINE_RUN_LOCAL_MODEL_EVALUATION=1, writes /tmp/semantic-eval.txt) runs 6 requests with an unrelated-audio/history workspace: previous commit failed 26 checks, current 0. Wording-brittle old marker "without changing" in `testPromptEngineeringBaselineEvaluation` can fail when Qwen writes "without altering" (constraint is still present).
 - Latency: validator adds ~10 ms; compact prompt +41 tokens. Machine noise dominates (same code ranged complex 15.9-19.9 s, throttled runs up to 26-33 s); back-to-back A/B: previous commit moderate 8.4-9.6 s, complex 14.6-15.5 s; this commit moderate 10.1-11.5 s, complex 15.9-16.2 s in the first clean run.
+
+---
+
+## Website (`website/`)
+
+Official landing page, added 2026-11-09. Next.js 16, TypeScript, Tailwind 4, Motion; fully static, no backend. It is independent of the Swift package. See `website/README.md`.
+
+- Deploy on Vercel with Root Directory `website`. Set `NEXT_PUBLIC_SITE_URL` to the real domain (none chosen yet; canonical and Open Graph URLs depend on it).
+- **Blocker before launch: there is no GitHub release.** Every Download button goes to `NEXT_PUBLIC_DOWNLOAD_URL`, defaulting to `/releases/latest`, which redirects to an empty releases page until a build is published. The app is ad-hoc signed, so a public download also needs Developer ID signing and notarization or Gatekeeper will block it.
+- The notch demo is simulated: prewritten output (`src/content/prompts.ts`) and shortened timing, stated on the page.
+- `src/lib/motion.ts` copies `Theme.Motion`, and `RefynPanel` copies the SwiftUI layout. Update them if the app's notch or panel changes. Feature copy must match what the current build ships.
+- Verified: `tsc`, ESLint, production build; desktop and 390 px phone in a browser; Lighthouse mobile 97-98 performance and 100 accessibility, best practices, and SEO. Reduced-motion behavior is implemented but was not exercised in a browser.

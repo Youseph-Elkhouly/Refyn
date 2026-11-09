@@ -1,0 +1,197 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #111111;
+  --color-muted: #737373;
+  --color-secondary: #666666;
+  --color-line: #e5e5e5;
+  --color-surface: #f7f7f7;
+  --color-hover: #efefef;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --ease-native: cubic-bezier(0.22, 0.8, 0.26, 1);
+
+  --animate-spin-fast: spin 700ms linear infinite;
+}
+
+@layer base {
+  html {
+    background: #ffffff;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+    scroll-padding-top: 48px;
+  }
+
+  body {
+    background: #ffffff;
+    overflow-x: clip;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+}
+
+/* The notch is black, so its focus ring has to be white. */
+.on-notch:focus-visible {
+  outline-color: #ffffff;
+  outline-offset: -3px;
+}
+
+/* Scroll reveals. Only hidden once the inline script has confirmed JavaScript is running. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 520ms var(--ease-native) var(--delay, 0ms),
+    transform 520ms var(--ease-native) var(--delay, 0ms);
+}
+
+.js .reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+.caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: -0.16em;
+  background: currentColor;
+  animation: caret 1.05s steps(1) infinite;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.line-in {
+  animation: line-in 240ms var(--ease-native) both;
+}
+
+@keyframes line-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+/* Dictation waveform: runs only once scrolled into view. */
+.wave-bar {
+  transform: scaleY(0.25);
+  transform-origin: center;
+}
+
+.is-in .wave-bar {
+  animation: wave 1100ms ease-in-out infinite alternate;
+}
+
+@keyframes wave {
+  to {
+    transform: scaleY(1);
+  }
+}
+
+/* How it works: one pass through the three steps, staggered in reading order. */
+.step-type {
+  clip-path: inset(0 100% 0 0);
+}
+
+.is-in .step-type {
+  animation: step-type 850ms steps(32) var(--step, 0ms) forwards;
+}
+
+@keyframes step-type {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.step-in {
+  opacity: 0;
+  transform: translateY(5px);
+}
+
+.is-in .step-in {
+  animation: step-in 260ms var(--ease-native) var(--step, 0ms) forwards;
+}
+
+@keyframes step-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Skip layout and paint for sections far below the fold. */
+.offscreen-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1000px;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .js .reveal,
+  .js .reveal.is-in {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .caret,
+  .line-in,
+  .is-in .wave-bar {
+    animation: none;
+  }
+
+  .wave-bar {
+    transform: scaleY(0.7);
+  }
+
+  .step-type,
+  .is-in .step-type {
+    animation: none;
+    clip-path: none;
+  }
+
+  .step-in,
+  .is-in .step-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  * {
+    transition-duration: 0ms !important;
+  }
+}
