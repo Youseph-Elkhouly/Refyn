@@ -29,7 +29,7 @@ final class FinalEvaluationTests: XCTestCase {
         Case(name: "ambiguous auth", request: "make authentication better", mode: .advanced, keep: ["authentication"],
              forbidden: ["OAuth", "JWT", "MFA", "SSO", "SAML", "TOTP", "two-factor"], legit: ["review the current sign-in flow", "find the code that implements authentication"]),
         Case(name: "token logout", request: "users get logged out after the token expires. fix it but never store tokens in plain text", mode: .auto,
-             keep: ["never store tokens in plain text"], forbidden: ["store the token in plain text", "OAuth"], legit: ["reproduce the logout"]),
+             keep: ["tokens must not be stored in plain text"], forbidden: ["store the token in plain text", "OAuth"], legit: ["reproduce the logout"]),
         Case(name: "typo keep font", request: "fix the typo in the onboarding title and keep the font", mode: .auto, keep: ["typo", "onboarding title", "keep the font"], forbidden: ["change the font"], legit: []),
         Case(name: "image upload retry", request: "image uploads sometimes fail on timeout. add retry but don't retry 4xx responses. keep the current progress UI, max 2 retries, and test timeout, offline, and permanent failure cases. don’t change upload API",
              mode: .advanced, keep: ["timeout", "don't retry 4xx", "keep the current progress UI", "2 retries", "offline", "permanent failure", "don't change upload API"],
@@ -45,6 +45,11 @@ final class FinalEvaluationTests: XCTestCase {
         Case(name: "csv export", request: "add csv export to reports, keep the current filters, don't change the existing report API, and test empty results and very large exports", mode: .advanced,
              keep: ["csv", "keep the current filters", "don't change the existing report API", "empty results", "large exports"], forbidden: ["change the report API to", "add a parameter to the report API"],
              legit: ["test the empty results case", "test the very large exports case", "tests for empty results"]),
+        Case(name: "database concurrent timeouts", request: "Database operations are slow, intermittently fail, and time out under concurrent users. Fix the cause without changing the API or breaking anything.",
+             mode: .advanced,
+             keep: ["database operations are slow", "intermittent failures", "timeout under concurrent users", "without changing the API", "without breaking existing functionality"],
+             forbidden: ["unconditionally add indexes", "rebuild database indexes", "no timeout occurs under concurrent load", "significantly faster"],
+             legit: ["connection-pool waits or exhaustion", "lock contention", "query plans and access patterns", "same concurrent workload"]),
         Case(name: "date helper", request: "extract date formatting into a helper without changing displayed dates", mode: .basic, keep: ["helper", "without changing displayed dates"], forbidden: ["change the displayed dates to"], legit: ["extract date formatting"]),
     ]
 
@@ -72,9 +77,10 @@ final class FinalEvaluationTests: XCTestCase {
         var lines: [String] = []
         var latencies: [String: [Double]] = [:]
         var all: [Double] = []
+        var modelLatencies: [Double] = []
         var promptTokens: [Double] = [], outputTokens: [Double] = []
         var runs = 0, modelRuns = 0, fallbacks = 0, retries = 0, jsonRecovered = 0, jsonUnusable = 0, intentFailures = 0, contradictions = 0
-        var falsePositives = 0, corrections = 0, inventedTech = 0
+        var falsePositives = 0, corrections = 0, inventedTech = 0, genericCriteria = 0, invalidTaskGraphs = 0
         var details: [String] = []
 
         for pass in 1...passes {
@@ -89,11 +95,17 @@ final class FinalEvaluationTests: XCTestCase {
                 let usedModel = plan.provider != "local"
                 runs += 1; all.append(seconds)
                 latencies[trace?.tier ?? "?", default: []].append(seconds)
-                if usedModel { modelRuns += 1; if let m = manager.lastMetrics { promptTokens.append(Double(m.promptTokens)); outputTokens.append(Double(m.outputTokens)) } }
+                if usedModel {
+                    modelRuns += 1
+                    modelLatencies.append(seconds)
+                    if let m = manager.lastMetrics { promptTokens.append(Double(m.promptTokens)); outputTokens.append(Double(m.outputTokens)) }
+                }
                 if trace?.fallbackReason != nil { fallbacks += 1 }
                 retries += trace?.retries ?? 0
                 if (trace?.jsonRecoveryEdits ?? 0) > 0 { jsonRecovered += 1 }
                 jsonUnusable += trace?.events.filter { $0.stage == "model" && $0.outcome == "unusable-output" }.count ?? 0
+                genericCriteria += plan.successCriteria.filter(PromptQuality.genericCriterion).count
+                if PromptComposer.topologicalOrder(plan.tasks) == nil { invalidTaskGraphs += 1 }
 
                 let prompt = plan.optimizedPrompt
                 let lost = c.keep.filter { !MeaningMatch.contains(prompt, $0) }
@@ -115,8 +127,10 @@ final class FinalEvaluationTests: XCTestCase {
 
         var report = lines.joined(separator: "\n") + "\n\n=== SUMMARY ===\n"
         report += "requests=\(runs) modelRuns=\(modelRuns) fallbacks=\(fallbacks) retries=\(retries) jsonRecovered=\(jsonRecovered) jsonUnusableOutputs=\(jsonUnusable)\n"
-        report += "intentPreservationFailures=\(intentFailures) contradictoryOutputs=\(contradictions) inventedTechnology=\(inventedTech) validatorCorrections=\(corrections) falsePositiveRemovals=\(falsePositives)\n"
+        report += "intentPreservationFailures=\(intentFailures) contradictoryOutputs=\(contradictions) inventedTechnology=\(inventedTech) validatorCorrections=\(corrections) falsePositiveRemovals=\(falsePositives) genericCriteria=\(genericCriteria) invalidTaskGraphs=\(invalidTaskGraphs)\n"
         report += String(format: "latency all: median=%.1fs p95=%.1fs max=%.1fs\n", Self.percentile(all, 0.5), Self.percentile(all, 0.95), all.max() ?? 0)
+        let modelMean = modelLatencies.isEmpty ? 0 : modelLatencies.reduce(0, +) / Double(modelLatencies.count)
+        report += String(format: "latency model-backed: n=%d mean=%.2fs median=%.1fs p95=%.1fs\n", modelLatencies.count, modelMean, Self.percentile(modelLatencies, 0.5), Self.percentile(modelLatencies, 0.95))
         for tier in ["simple", "moderate", "complex"] { if let v = latencies[tier] { report += String(format: "latency %@: n=%d median=%.1fs p95=%.1fs\n", tier, v.count, Self.percentile(v, 0.5), Self.percentile(v, 0.95)) } }
         if !promptTokens.isEmpty {
             report += String(format: "tokens (model runs, last call): prompt median=%.0f p95=%.0f, output median=%.0f p95=%.0f\n", Self.percentile(promptTokens, 0.5), Self.percentile(promptTokens, 0.95), Self.percentile(outputTokens, 0.5), Self.percentile(outputTokens, 0.95))
@@ -130,6 +144,8 @@ final class FinalEvaluationTests: XCTestCase {
         XCTAssertEqual(contradictions, 0)
         XCTAssertEqual(falsePositives, 0, "the validator must not remove legitimate clauses")
         XCTAssertEqual(inventedTech, 0)
+        XCTAssertEqual(genericCriteria, 0, "vague acceptance criteria must be repaired before display")
+        XCTAssertEqual(invalidTaskGraphs, 0, "task dependency IDs must form a valid acyclic graph")
     }
 
     /// Repeats moderate requests (the tier that produced most malformed JSON) and counts, per generation, whether the first output was usable.

@@ -21,19 +21,44 @@ enum TranscriberError: Error, LocalizedError {
     var errorDescription: String? { "Download a speech model in Settings › Voice before dictating." }
 }
 
-/// Local speech-to-text with WhisperKit. Audio never leaves the Mac. Models are downloaded only
-/// when the user asks, into Application Support/Refyn/SpeechModels.
+/// Local speech-to-text with WhisperKit. Audio never leaves the Mac. Optional models are downloaded
+/// into Application Support/Refyn/SpeechModels; release builds can include the default model.
 actor SpeechTranscriber {
     private var kit: WhisperKit?
     private var loadedModel: String?
 
     static func modelFolder(_ model: SpeechModel) -> URL? {
-        let root = AppPaths.speechModelsDirectory
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return nil }
-        for case let url as URL in enumerator where url.lastPathComponent == model.rawValue {
-            if FileManager.default.fileExists(atPath: url.appending(path: "AudioEncoder.mlmodelc").path) { return url }
+        modelFolder(
+            model: model,
+            supportDirectory: AppPaths.speechModelsDirectory,
+            bundledResourceDirectory: Bundle.main.resourceURL?.appending(path: "SpeechModels", directoryHint: .isDirectory)
+        )
+    }
+
+    static func modelFolder(model: SpeechModel, supportDirectory: URL, bundledResourceDirectory: URL?) -> URL? {
+        let fileManager = FileManager.default
+        let roots = [supportDirectory, bundledResourceDirectory].compactMap { $0 }
+
+        for root in roots {
+            let directModel = root.appending(path: model.rawValue, directoryHint: .isDirectory)
+            if containsAudioEncoder(at: directModel, fileManager: fileManager) { return directModel }
+
+            guard let enumerator = fileManager.enumerator(at: root, includingPropertiesForKeys: nil) else { continue }
+            for case let url as URL in enumerator where url.lastPathComponent == model.rawValue {
+                if containsAudioEncoder(at: url, fileManager: fileManager) { return url }
+            }
         }
         return nil
+    }
+
+    static func isBundled(_ model: SpeechModel) -> Bool {
+        guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "SpeechModels", directoryHint: .isDirectory) else { return false }
+        let folder = resourceRoot.appending(path: model.rawValue, directoryHint: .isDirectory)
+        return containsAudioEncoder(at: folder, fileManager: .default)
+    }
+
+    private static func containsAudioEncoder(at folder: URL, fileManager: FileManager) -> Bool {
+        fileManager.fileExists(atPath: folder.appending(path: "AudioEncoder.mlmodelc").path)
     }
 
     static func isDownloaded(_ model: SpeechModel) -> Bool { modelFolder(model) != nil }

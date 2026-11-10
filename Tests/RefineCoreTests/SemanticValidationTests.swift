@@ -67,7 +67,7 @@ final class SemanticValidationTests: XCTestCase {
         for invented in ["Display retry attempts", "retry counter", "retry count"] {
             XCTAssertFalse(prompt.localizedCaseInsensitiveContains(invented), invented)
         }
-        XCTAssertTrue(plan.successCriteria.contains { $0.hasPrefix("Unchanged:") && $0.contains("progress UI") })
+        XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("preserve the current progress UI") }, "Keep the UI boundary without inventing UI/API behavior: \(plan.successCriteria)")
         XCTAssertTrue(plan.successCriteria.contains { $0.contains("upload API keeps its existing signature and behavior") })
         XCTAssertTrue(plan.tasks.allSatisfy { !$0.title.contains("progress UI") })
         XCTAssertTrue(plan.notices.contains { $0.contains("conflicted with the request") })
@@ -89,6 +89,29 @@ final class SemanticValidationTests: XCTestCase {
         for unrelated in ["audio", "Speech", "PromptHistory", "Prompt history", "Express", "TypeScript", "Dictation"] {
             XCTAssertFalse(prompt.localizedCaseInsensitiveContains(unrelated), "\(unrelated) is not about image uploads")
         }
+    }
+
+    func testWorkspaceNoteNeedsMoreThanOneBroadWordToMatch() {
+        let request = "Database operations are slow and time out under concurrent users; preserve the existing API and functionality."
+        let note = Note(workspaceID: UUID(), title: "Prompt history", body: "Send completion notifications when users optimize a prompt.")
+        let context = ContextRetriever.retrieve(for: RequestAnalysis(request), workspaceName: "w", graph: nil, notes: [note])
+        XCTAssertTrue(context.notes.isEmpty, "The shared word 'users' does not make prompt-history notes relevant to database performance.")
+
+        let databaseNote = Note(workspaceID: UUID(), title: "Database connection pool", body: "Pool wait time is recorded.")
+        let related = ContextRetriever.retrieve(for: RequestAnalysis("Database requests time out while the connection pool is busy."), workspaceName: "w", graph: nil, notes: [databaseNote])
+        XCTAssertEqual(related.notes.count, 1, "Multiple specific matches preserve relevant project context.")
+    }
+
+    func testConstraintOnlyTextCannotBeLabeledAsObservedBehavior() {
+        let request = "The database is slow under concurrent users; fix it without changing the API or breaking anything."
+        let analysis = RequestAnalysis(request)
+        let directives = SemanticValidator.directives(in: request)
+        XCTAssertTrue(directives.contains { $0.kind == .preserve && $0.objectText.localizedCaseInsensitiveContains("API") }, "the API is a preserved boundary: \(directives)")
+        XCTAssertTrue(directives.contains { $0.kind == .prohibit && $0.verb == "break" && $0.objectText == "existing behavior" }, "generic 'anything' is not an observed symptom: \(directives)")
+        XCTAssertFalse(analysis.constraints.contains { $0.localizedCaseInsensitiveContains("breaking anything") })
+        XCTAssertFalse(SemanticValidator.clauses(request).contains { clause in
+            !SemanticValidator.parse(clause).isEmpty && clause.localizedCaseInsensitiveContains("reported behavior")
+        })
     }
 
     func testFileReferencesAreOnlyLeadsAndUnsupportedOnesAreDropped() async throws {
@@ -163,7 +186,8 @@ final class SemanticValidationTests: XCTestCase {
         plan.codeReferences = []
         let result = try await PromptOptimizer(provider: StubProvider(result: .success(plan)))
             .optimize(.init(text: Self.request, mode: .advanced, graph: try Fixtures.graph(nodes: [], edges: [])))
-        XCTAssertEqual(result.tasks.first?.title, "Locate the code that implements this")
+        XCTAssertTrue(result.tasks.first?.detail.localizedCaseInsensitiveContains("relevant code path") == true
+                       || result.optimizedPrompt.localizedCaseInsensitiveContains("Locate the relevant implementation"))
         XCTAssertFalse(result.optimizedPrompt.contains("Investigation targets"))
     }
 
@@ -199,6 +223,19 @@ final class SemanticValidationTests: XCTestCase {
     func testPerformanceRequestKeepsResultOrderAndAPI() {
         correct("make search faster but don't change the result order or the public API",
                 removing: ["Change the public API to accept a page size"], keeping: ["Measure the current search time first"])
+    }
+
+    func testUIInterfaceConstraintIsNotRewrittenAsAnAPIContract() async throws {
+        let request = "Make settings view opening faster without redesigning the interface."
+        let model = ModelPlan(intent: "Improve settings view opening", taskType: "ui", role: "",
+                              objective: "Make the settings view open faster without redesigning the interface.",
+                              confirmedRequirements: ["Without redesigning the interface"],
+                              tasks: [.init(id: "repro", title: "Measure settings view opening")],
+                              successCriteria: ["The settings view opens quickly"],
+                              verificationSteps: ["Repeat opening the settings view and record the elapsed time"])
+        let plan = try await optimize(request, plan: model, mode: .advanced)
+        XCTAssertFalse(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("signature and behavior") }, "UI constraints are not API contracts: \(plan.successCriteria)")
+        XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("current interface") }, "Keep the UI boundary grounded and readable: \(plan.successCriteria)")
     }
 
     func testBugFixDoesNotAlterTheSchema() {

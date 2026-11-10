@@ -27,6 +27,10 @@ enum Preferences {
         get { defaults.object(forKey: "askForMissingInformation") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "askForMissingInformation") }
     }
+    static var completionNotificationsEnabled: Bool {
+        get { defaults.object(forKey: "completionNotificationsEnabled") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "completionNotificationsEnabled") }
+    }
     static var mode: PromptMode {
         get { defaults.string(forKey: "promptMode").flatMap(PromptMode.init(rawValue:)) ?? .auto }
         set { defaults.set(newValue.rawValue, forKey: "promptMode") }

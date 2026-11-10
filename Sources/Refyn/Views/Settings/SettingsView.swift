@@ -31,7 +31,7 @@ struct SettingsView: View {
         .frame(width: 560, height: 560)
         .background(Theme.background)
         .foregroundStyle(Theme.text)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .tint(Theme.text)
     }
 }
@@ -54,6 +54,8 @@ struct ModelSettings: View {
     let model: AppModel
     @State private var iterations = Preferences.iterationLimit
     @State private var askForMissingInformation = Preferences.askForMissingInformation
+    @State private var completionNotifications = Preferences.completionNotificationsEnabled
+    @State private var notificationError: String?
     @State private var managementError: String?
 
     var body: some View {
@@ -138,12 +140,22 @@ struct ModelSettings: View {
                 SettingsRow(title: "Ask for missing information", detail: "Clarify vague requests before generation.") {
                     RToggle(title: "Ask before optimizing", isOn: $askForMissingInformation)
                 }
+                SettingsRow(title: "Completion notifications", detail: notificationError ?? "Opt in to a macOS alert; the first enable asks for notification permission.") {
+                    RToggle(title: "Notify me when ready", isOn: $completionNotifications)
+                }
                 SettingsRow(title: "Fix-loop attempts", detail: "How many times an agent may retry before stopping.", divider: false) {
                     Stepper("\(iterations)", value: $iterations, in: 1...10).onChange(of: iterations) { Preferences.iterationLimit = iterations }
                 }
             }
         }
         .onChange(of: askForMissingInformation) { Preferences.askForMissingInformation = askForMissingInformation }
+        .onChange(of: completionNotifications) {
+            Task {
+                let enabled = await model.setCompletionNotificationsEnabled(completionNotifications)
+                completionNotifications = Preferences.completionNotificationsEnabled
+                notificationError = enabled ? nil : "Notifications are blocked. Allow them in macOS System Settings."
+            }
+        }
     }
 }
 
@@ -230,7 +242,7 @@ struct VoiceSettings: View {
                             Text("\(Int(p * 100))%").font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
                         }
                     } else if downloaded.contains(speechModel) {
-                        StatusIndicator(kind: .ready, label: "Downloaded")
+                        StatusIndicator(kind: .ready, label: SpeechTranscriber.isBundled(speechModel) ? "Included with app" : "Downloaded")
                     } else {
                         RButton(title: "Download", symbol: "arrow.down.circle") {
                             Task {

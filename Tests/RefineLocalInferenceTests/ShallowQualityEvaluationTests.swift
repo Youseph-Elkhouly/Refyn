@@ -189,4 +189,82 @@ final class ShallowQualityEvaluationTests: XCTestCase {
         }
         print("Quality evaluation: \(output)")
     }
+
+    /// Live evaluation for the reported database defects plus several adjacent software tasks.
+    /// Captures every model/validation stage alongside the final rendered prompt and simple quality metrics.
+    @MainActor func testRealDatabaseAndDomainQualityEvaluation() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
+            throw XCTSkip("Opt-in real Qwen database/domain quality evaluation")
+        }
+        let cases: [(name: String, request: String, mustKeep: [String])] = [
+            ("database-concurrency",
+             "Database operations are slow, intermittently fail, and time out under concurrent users. Find and fix the cause without changing the API or breaking existing functionality.",
+             ["slow", "intermittently fail", "time out", "concurrent users", "connection-pool", "lock contention", "query-plan evidence"]),
+            ("ui-interactions",
+             "Opening the settings view is slow, switching back to the main view sometimes freezes, and buttons occasionally stop responding. Find and fix the cause without redesigning the interface.",
+             ["opening the settings view", "switching back", "buttons", "freezes"]),
+            ("api-failures",
+             "The API intermittently returns errors and times out when concurrent requests increase. Diagnose and fix the cause without changing the response contract.",
+             ["API", "errors", "times out", "concurrent requests", "response contract"]),
+            ("refactor",
+             "Clean up the report export code while keeping the public API and generated CSV output unchanged.",
+             ["report export", "public API", "CSV output"]),
+            ("search-performance",
+             "Search gets slower as prompt history grows. Improve it without changing result order or returned results.",
+             ["Search", "prompt history", "result order", "returned results"]),
+        ]
+        let manager = LocalModelManager()
+        await manager.warmUp()
+        let unrelatedNote = Note(workspaceID: UUID(), title: "Prompt completion notifications",
+                                 body: "Send a notification when users finish optimizing a prompt.")
+        let output = ProcessInfo.processInfo.environment["QUALITY_DOMAIN_EVAL_OUTPUT"] ?? "/tmp/refyn-semantic-domain-evaluation.txt"
+        var report = "Qwen3-4B / Advanced / live local inference / five domain cases / unrelated workspace note supplied\n"
+        var totalLatency = 0.0
+        var fallbackCount = 0
+        var preservedCount = 0
+        var irrelevantContextCount = 0
+        for sample in cases {
+            let provider = QualityRecordingProvider(manager)
+            let start = Date()
+            let plan = try await PromptOptimizer(provider: provider).optimize(.init(text: sample.request, mode: .advanced, notes: [unrelatedNote]))
+            let latency = Date().timeIntervalSince(start)
+            totalLatency += latency
+            if plan.trace?.fallbackReason != nil { fallbackCount += 1 }
+            let termsPreserved = RequestAnalysis(sample.request).missingTerms(in: plan.optimizedPrompt).isEmpty
+            if termsPreserved { preservedCount += 1 }
+            let unrelatedContextExcluded = !plan.optimizedPrompt.localizedCaseInsensitiveContains("notification when users finish optimizing")
+            if unrelatedContextExcluded { irrelevantContextCount += 1 }
+            let missing = sample.mustKeep.filter { signal in
+                if signal.localizedCaseInsensitiveCompare("intermittently fail") == .orderedSame {
+                    return !MeaningMatch.contains(plan.optimizedPrompt, signal)
+                        && !MeaningMatch.contains(plan.optimizedPrompt, "intermittent failures")
+                }
+                if signal.localizedCaseInsensitiveContains("time out") {
+                    return !MeaningMatch.contains(plan.optimizedPrompt, signal) && !MeaningMatch.contains(plan.optimizedPrompt, "timeout")
+                }
+                return !MeaningMatch.contains(plan.optimizedPrompt, signal)
+            }
+            XCTAssertTrue(termsPreserved, "\(sample.name): original specifics were lost: \(RequestAnalysis(sample.request).missingTerms(in: plan.optimizedPrompt))")
+            XCTAssertFalse(plan.successCriteria.contains(where: PromptQuality.genericCriterion), "\(sample.name): generic criteria survived")
+            XCTAssertTrue(plan.verificationInstructions.isEmpty == false, "\(sample.name): no verification guidance")
+            XCTAssertTrue(unrelatedContextExcluded, "\(sample.name): unrelated notification note leaked into final prompt")
+            if sample.name == "database-concurrency" {
+                XCTAssertTrue(missing.isEmpty, "Database evidence candidates or user symptoms were omitted: \(missing)\n\(plan.optimizedPrompt)")
+                XCTAssertFalse(plan.tasks.contains { $0.title.range(of: #"(?i)\b(?:add|rebuild|reindex).*\bindexes?\b"#, options: .regularExpression) != nil },
+                               "An index change must not be prescribed before query-plan evidence.")
+                XCTAssertFalse(plan.tasks.contains { $0.title.range(of: #"(?i)\b(?:optimi[sz]e slow queries|implement monitoring)\b"#, options: .regularExpression) != nil },
+                               "A symptom does not authorize a specific optimization or monitoring change.")
+            } else if sample.name == "ui-interactions" {
+                XCTAssertFalse(plan.confirmedRequirements.contains { MeaningMatch.contains($0, "switching back freezes") || MeaningMatch.contains($0, "buttons stop responding") },
+                               "Reported failures belong in investigation guidance, not requirements.")
+            }
+            let metrics = "METRICS latency=\(String(format: "%.2f", latency))s words=\(plan.optimizedPrompt.split(whereSeparator: \.isWhitespace).count) chars=\(plan.optimizedPrompt.count) preserved=\(termsPreserved) missingDomainSignals=\(missing) fallback=\(plan.trace?.fallbackReason ?? "none")"
+            report += "\nCASE \(sample.name)\nREQUEST: \(sample.request)\n\(await provider.dump())\nFINAL\n\(plan.optimizedPrompt)\nTRACE\n\(String(describing: plan.trace))\n\(metrics)\n"
+            try report.write(toFile: output, atomically: true, encoding: .utf8)
+        }
+        let average = totalLatency / Double(cases.count)
+        report += "\nSUMMARY cases=\(cases.count) intentPreserved=\(preservedCount)/\(cases.count) unrelatedContextExcluded=\(irrelevantContextCount)/\(cases.count) fallback=\(fallbackCount)/\(cases.count) averageLatency=\(String(format: "%.2f", average))s\n"
+        try report.write(toFile: output, atomically: true, encoding: .utf8)
+        print("Domain quality evaluation: \(output) averageLatency=\(String(format: "%.2f", average))s fallback=\(fallbackCount)/\(cases.count)")
+    }
 }

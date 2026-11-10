@@ -20,7 +20,10 @@ struct ExpandedPanelView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .id(model.route)
-            .transition(.opacity)
+            .transition(.asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: Theme.Motion.base).delay(0.05)),
+                removal: .opacity.animation(.easeOut(duration: 0.07))
+            ))
         }
         .foregroundStyle(Theme.text)
         .motion(Theme.Motion.base, value: model.route)
@@ -36,7 +39,7 @@ struct ExpandedPanelView: View {
                     Text("Refyn").font(Theme.title)
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressDimStyle())
             .help(model.route == .compose ? "Back to the last result" : "Back to the editor")
             .accessibilityLabel("Refyn")
             .disabled(model.route == .compose && model.plan == nil)

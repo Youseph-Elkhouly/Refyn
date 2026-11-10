@@ -74,7 +74,7 @@ struct ListRow<Content: View>: View {
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(selected ? Theme.hover : hovering ? Theme.surface : .clear))
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressDimStyle())
         .onHover { hovering = $0 }
         .motion(Theme.Motion.fast, value: hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -91,7 +91,7 @@ struct NoteEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.sm) {
-                TextField("Title", text: $note.title).textFieldStyle(.plain).font(Theme.title)
+                TextField("Title", text: $note.title, prompt: Text("Title").foregroundStyle(Theme.textMuted)).textFieldStyle(.plain).font(Theme.title)
                 Spacer(minLength: 0)
                 Text(saved ? "Saved" : "Saving…").font(Theme.caption).foregroundStyle(Theme.textMuted)
                 HStack(spacing: 6) {
@@ -156,7 +156,7 @@ struct SavedPromptsView: View {
                     Spacer()
                     Text(saved.updatedAt.formatted(.relative(presentation: .named))).font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }
-                Text(saved.prompt).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(isSelected ? 8 : 2)
+                Text(saved.prompt).font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(isSelected ? 8 : 2)
                 if isSelected {
                     HStack(spacing: 6) {
                         RButton(title: "Copy", symbol: "doc.on.doc", kind: .primary) { model.copy(saved.prompt) }
@@ -181,7 +181,7 @@ struct SavedPromptEditor: View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             SectionHeader(title: "Edit saved prompt")
             RTextField(placeholder: "Title", text: $saved.title)
-            REditor(text: $saved.prompt, placeholder: "Prompt", font: Theme.mono, inset: 8)
+            REditor(text: $saved.prompt, placeholder: "Prompt", font: Theme.prompt, inset: 8)
                 .frame(minHeight: 260)
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(Theme.input))
                 .hairlineBorder(Theme.Radius.md)
@@ -193,6 +193,6 @@ struct SavedPromptEditor: View {
         }
         .padding(Theme.Space.lg).frame(width: 560)
         .background(Theme.background)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }

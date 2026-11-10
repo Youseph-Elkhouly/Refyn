@@ -1,9 +1,10 @@
 import AppKit
 import RefineCore
 import SwiftUI
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     private var model: AppModel!
     private var panel: PanelController!
     private var statusItem: NSStatusItem!
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.onCollapse = { [weak self] in self?.panel.collapse() }
         setupMenuBar()
         setupHotKeys()
+        UNUserNotificationCenter.current().delegate = self
         observeVoice()
         Task { await model.load() }
         Task { await model.localModel.warmUp() }
@@ -106,8 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 560), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             w.title = "Settings"
             w.titlebarAppearsTransparent = true
-            w.appearance = NSAppearance(named: .darkAqua)
-            w.backgroundColor = NSColor(red: 9 / 255, green: 9 / 255, blue: 9 / 255, alpha: 1)
+            w.appearance = NSAppearance(named: .aqua)
+            w.backgroundColor = .white
             w.contentView = NSHostingView(rootView: view)
             w.isReleasedWhenClosed = false
             w.delegate = self
@@ -124,6 +126,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, self.settingsWindow?.isVisible != true else { return }
             self.panel.restoreAfterSecondaryWindow()
         }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        completionHandler()
+        Task { @MainActor [weak self] in self?.panel.expand() }
     }
 
     func openFolderPanel() -> URL? {

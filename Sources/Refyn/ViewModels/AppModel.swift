@@ -21,6 +21,8 @@ final class AppModel {
 
     // Panel
     var isExpanded = false
+    /// False once the panel has fully collapsed, so the mounted but hidden content takes no input or shortcuts.
+    var panelContentEnabled = true
     var route: Route = .compose { didSet { if oldValue != route { onLayoutChange() } } }
 
     // Workspaces
@@ -47,6 +49,7 @@ final class AppModel {
     var banner: Banner?
     let voice = VoiceController()
     let localModel = LocalModelManager()
+    private let completionNotifications = CompletionNotificationService()
     /// Optional small model that answers moderate requests faster. Used only when downloaded.
     let fastModel = LocalModelManager(modelID: LocalModelManager.fastModelID)
 
@@ -200,6 +203,20 @@ final class AppModel {
         catch { show("Could not load prompt history: \(error.localizedDescription)", .error) }
     }
 
+    func setCompletionNotificationsEnabled(_ enabled: Bool) async -> Bool {
+        guard enabled else {
+            Preferences.completionNotificationsEnabled = false
+            return true
+        }
+        guard await completionNotifications.requestAuthorization() else {
+            Preferences.completionNotificationsEnabled = false
+            show("Allow Refyn notifications in System Settings to receive completion alerts.", .warning)
+            return false
+        }
+        Preferences.completionNotificationsEnabled = true
+        return true
+    }
+
     func openHistoryResult(_ previous: PromptPlan) {
         input = previous.originalPrompt
         plan = previous
@@ -217,6 +234,22 @@ final class AppModel {
         input = saved.prompt
         plan = nil
         route = .compose
+    }
+
+    /// Re-optimizes the current result with a user-remembered detail. The prior result remains
+    /// saved in history; the replacement is stored as a linked revision after generation succeeds.
+    func reoptimizeAddingContext(_ rawContext: String) async {
+        guard let previous = plan else { return }
+        let addition = rawContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !addition.isEmpty else {
+            show("Add the detail you remembered first.", .warning)
+            return
+        }
+        let text = previous.originalPrompt + "\n\nAdditional context from you:\n\(addition)"
+        await performOptimization(text: text, answers: [], unanswered: [], regenerate: true,
+                                  previousOptimizedPrompt: previous.optimizedPrompt,
+                                  previousConfirmedRequirements: previous.confirmedRequirements,
+                                  revisionOf: previous.id)
     }
 
     // MARK: Optimizing
@@ -284,7 +317,9 @@ final class AppModel {
 
     private static func clarificationKey(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
-    private func performOptimization(text: String, answers: [PromptAnswer], unanswered: [String], regenerate: Bool) async {
+    private func performOptimization(text: String, answers: [PromptAnswer], unanswered: [String], regenerate: Bool,
+                                     previousOptimizedPrompt: String? = nil, previousConfirmedRequirements: [String] = [],
+                                     revisionOf: UUID? = nil) async {
         guard !isOptimizing else { return }
         isOptimizing = true
         defer { isOptimizing = false }
@@ -292,20 +327,27 @@ final class AppModel {
         let provider: (any LLMProvider)? = LocalLLMProvider(manager: localModel, fastManager: fastModel)
         let optimizer = PromptOptimizer(provider: provider)
         let input = PromptOptimizer.Input(text: text, mode: mode, customTechniques: customTechniques, workspace: current, graph: workspaceGraph,
-                                          notes: notes, iterationLimit: Preferences.iterationLimit, userAnswers: answers, unansweredQuestions: unanswered)
+                                          notes: notes, iterationLimit: Preferences.iterationLimit, userAnswers: answers, unansweredQuestions: unanswered,
+                                          previousOptimizedPrompt: previousOptimizedPrompt,
+                                          previousConfirmedRequirements: previousConfirmedRequirements, revisionOf: revisionOf)
         do {
             // Identical inputs reuse the stored plan instead of calling the model again.
             if !regenerate, let cached = try await store.cachedPlan(cacheKey: optimizer.cacheKey(for: input)), cached.provider == LocalModelManager.modelID {
                 plan = cached
+                self.input = text
                 show("Reused the plan from an identical earlier request.")
             } else {
                 let result = try await optimizer.optimize(input)
                 try await store.save(result)
                 plan = result
+                self.input = text
                 await reloadPromptHistory()
                 if let notice = result.notices.first { show(notice, .warning) }
             }
             route = .result
+            if Preferences.completionNotificationsEnabled {
+                completionNotifications.sendCompletion()
+            }
         } catch {
             if (error as? LLMError) != .cancelled { show(error.localizedDescription, .error) }
         }

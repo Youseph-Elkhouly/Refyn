@@ -64,8 +64,12 @@ public struct RequestAnalysis: Sendable, Hashable {
     /// keep-unchanged and limit on its own; a sentence with none of those stays whole.
     static func constraintClauses(_ sentence: String) -> [String] {
         let clauses = SemanticValidator.clauses(sentence)
-        let directive = clauses.filter { !SemanticValidator.parse($0).isEmpty }
-        return directive.isEmpty || clauses.count == 1 ? [sentence] : directive
+        let directives = clauses.flatMap(SemanticValidator.parse)
+        guard !directives.isEmpty else { return [sentence] }
+        let punctuation = sentence.last.map { ".!?".contains($0) ? String($0) : "" } ?? ""
+        return directives.enumerated().map { index, directive in
+            index == directives.count - 1 ? directive.clause + punctuation : directive.clause
+        }
     }
 
     static func isConstraint(_ s: String) -> Bool {

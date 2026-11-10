@@ -188,13 +188,19 @@ public struct OptimizationRequest: Sendable, Hashable {
     public var iterationLimit: Int
     public var userAnswers: [PromptAnswer]
     public var unansweredQuestions: [String]
+    public var previousOptimizedPrompt: String?
+    public var previousConfirmedRequirements: [String]
     public var correctiveInstruction: String?
     /// Selects the prompt size and output budget. Defaults to the full path.
     public var tier: OptimizationTier
-    public init(analysis: RequestAnalysis, mode: PromptMode, techniques: [PromptTechnique], context: RetrievedContext, iterationLimit: Int, userAnswers: [PromptAnswer] = [], unansweredQuestions: [String] = [], correctiveInstruction: String? = nil, tier: OptimizationTier = .complex) {
+    public init(analysis: RequestAnalysis, mode: PromptMode, techniques: [PromptTechnique], context: RetrievedContext, iterationLimit: Int,
+                userAnswers: [PromptAnswer] = [], unansweredQuestions: [String] = [], previousOptimizedPrompt: String? = nil,
+                previousConfirmedRequirements: [String] = [], correctiveInstruction: String? = nil, tier: OptimizationTier = .complex) {
         self.tier = tier
         self.analysis = analysis; self.mode = mode; self.techniques = techniques; self.context = context; self.iterationLimit = iterationLimit; self.userAnswers = userAnswers
         self.unansweredQuestions = unansweredQuestions
+        self.previousOptimizedPrompt = previousOptimizedPrompt
+        self.previousConfirmedRequirements = previousConfirmedRequirements
         self.correctiveInstruction = correctiveInstruction
     }
 }

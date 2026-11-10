@@ -38,11 +38,12 @@ struct PromptHistoryView: View {
                 HStack(spacing: Theme.Space.sm) {
                     Text(plan.originalPrompt).font(Theme.body).lineLimit(isSelected ? 4 : 2)
                     Spacer(minLength: 0)
+                    if plan.revisionOf != nil { Chip(text: "Updated") }
                     Text(plan.createdAt.formatted(.relative(presentation: .named)))
                         .font(Theme.caption).foregroundStyle(Theme.textMuted).fixedSize()
                 }
                 Text(plan.optimizedPrompt.replacingOccurrences(of: "\n", with: " "))
-                    .font(Theme.mono).foregroundStyle(Theme.textSecondary).lineLimit(isSelected ? 4 : 2)
+                    .font(Theme.prompt).foregroundStyle(Theme.textSecondary).lineLimit(isSelected ? 4 : 2)
                 if isSelected {
                     HStack(spacing: Theme.Space.sm) {
                         RButton(title: "View result", symbol: "arrow.up.forward", kind: .primary) { model.openHistoryResult(plan) }

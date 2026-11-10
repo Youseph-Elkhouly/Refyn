@@ -175,6 +175,8 @@ public struct PipelineTrace: Codable, Hashable, Sendable {
 
 public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
+    /// ID of the previous saved result when this plan re-optimizes it with new user context.
+    public var revisionOf: UUID?
     public var workspaceID: UUID?
     public var originalPrompt: String
     public var optimizedPrompt: String
@@ -210,14 +212,14 @@ public struct PromptPlan: Codable, Identifiable, Hashable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), workspaceID: UUID? = nil, originalPrompt: String, optimizedPrompt: String = "", chainedPrompts: [String] = [],
+    public init(id: UUID = UUID(), revisionOf: UUID? = nil, workspaceID: UUID? = nil, originalPrompt: String, optimizedPrompt: String = "", chainedPrompts: [String] = [],
                 mode: PromptMode = .auto, intent: String = "", taskType: TaskType = .other, selectedTechniques: [PromptTechnique] = [],
                 codeReferences: [CodeReference] = [], tasks: [PlanTask] = [], constraints: [String] = [], successCriteria: [String] = [],
                 missingInformation: [String] = [], confirmedRequirements: [String] = [], suggestedDecisions: [String] = [],
                 plannedComponents: [PlannedComponent] = [], iterationLimit: Int = 0, verificationInstructions: [String] = [], guidance: PlaybookGuidance? = nil, terminology: [String]? = nil,
                 validation: IntentValidation = IntentValidation(), provider: String = "local", notices: [String] = [], trace: PipelineTrace? = nil, cacheKey: String = "",
                 createdAt: Date = .now, updatedAt: Date = .now) {
-        self.id = id; self.workspaceID = workspaceID; self.originalPrompt = originalPrompt; self.optimizedPrompt = optimizedPrompt
+        self.id = id; self.revisionOf = revisionOf; self.workspaceID = workspaceID; self.originalPrompt = originalPrompt; self.optimizedPrompt = optimizedPrompt
         self.chainedPrompts = chainedPrompts; self.mode = mode; self.intent = intent; self.taskType = taskType
         self.selectedTechniques = selectedTechniques; self.codeReferences = codeReferences; self.tasks = tasks
         self.constraints = constraints; self.successCriteria = successCriteria; self.missingInformation = missingInformation

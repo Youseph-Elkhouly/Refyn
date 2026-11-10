@@ -101,6 +101,23 @@ final class StoreAndGraphTests: XCTestCase {
         XCTAssertEqual(loginMatches.map(\.id), [newer.id])
     }
 
+    func testPromptReoptimizationSavesARevisionWithoutOverwritingThePreviousResult() async throws {
+        let previous = PromptPlan(originalPrompt: "Add CSV export", optimizedPrompt: "Export filtered reports as CSV")
+        let revision = PromptPlan(revisionOf: previous.id,
+                                  originalPrompt: "Add CSV export\n\nAdditional context from you:\nInclude archived reports.",
+                                  optimizedPrompt: "Export filtered and archived reports as CSV")
+        try await store.save(previous)
+        try await store.save(revision)
+
+        let history = try await store.recentPlans(matching: "archived reports")
+        XCTAssertEqual(history.map(\.id), [revision.id], "Search should find the new version by its added detail.")
+        let fetchedRevision = try await store.plan(revision.id)
+        let savedRevision = try XCTUnwrap(fetchedRevision)
+        XCTAssertEqual(savedRevision.revisionOf, previous.id)
+        let fetchedPrevious = try await store.plan(previous.id)
+        XCTAssertNotNil(fetchedPrevious, "The earlier optimized result remains available in history.")
+    }
+
     func testV1DatabaseMigratesNotes() async throws {
         let url = dir.appending(path: "old.sqlite")
         let queue = try DatabaseQueue(path: url.path)

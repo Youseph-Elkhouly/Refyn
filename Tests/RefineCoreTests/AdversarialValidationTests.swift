@@ -50,9 +50,17 @@ final class AdversarialValidationTests: XCTestCase {
         XCTAssertTrue(r.plan.suggestedDecisions.contains("Retries occur only on timeout and network failures"))
     }
 
-    func testEquivalentWordingForConstraintsIsKept() {
+    func testTrailingOnlyDoesNotMakeAReportedConditionExclusive() {
+        let r = correct(plan(crit: ["Retries occur on timeout only", "A timed-out upload is retried"]))
+        XCTAssertEqual(r.plan.successCriteria, ["A timed-out upload is retried"])
+        XCTAssertFalse(r.plan.suggestedDecisions.contains { $0.localizedCaseInsensitiveContains("retry only") })
+    }
+
+    func testConstraintRestatementsDoNotRemainInSuggestedApproach() {
         let r = correct(plan(req: ["Never retry client errors (4xx)"], sug: ["Leave the progress UI as it is", "Do not alter the upload API"], crit: ["Progress UI stays the same", "4xx responses are not retried"]))
-        XCTAssertTrue(r.corrections.isEmpty, "\(r.corrections)")
+        XCTAssertTrue(r.plan.suggestedDecisions.isEmpty, "Request boundaries belong in constraints, not suggested approach: \(r.plan.suggestedDecisions)")
+        XCTAssertEqual(r.corrections.count, 2, "The final optimizer restores these locally extracted boundaries after removing model field misclassification.")
+        XCTAssertTrue(r.corrections.allSatisfy { $0.reason.contains("belongs in Constraints") })
     }
 
     func testPermittedActionResemblingTheProhibitedOneIsKept() {
@@ -118,6 +126,13 @@ final class AdversarialValidationTests: XCTestCase {
         XCTAssertTrue(r.plan.tasks.isEmpty)
         XCTAssertTrue(r.plan.suggestedDecisions.isEmpty)
         XCTAssertTrue(r.plan.successCriteria.isEmpty)
+    }
+
+    func testCannotNegationProtectsAValidColorConstraint() {
+        let analysis = RequestAnalysis("make the settings header cleaner and don't add new colors")
+        let r = SemanticValidator.correctWithReport(plan(crit: ["Cannot introduce new colors"]), analysis: analysis)
+        XCTAssertEqual(r.plan.successCriteria, ["Cannot introduce new colors"])
+        XCTAssertTrue(Lex.hasMarker("Cannot introduce new colors"))
     }
 
     func testAnInventedPolicyForAnUnspecifiedScenarioIsCaught() {

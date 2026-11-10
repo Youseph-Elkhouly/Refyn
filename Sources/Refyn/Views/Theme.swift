@@ -5,23 +5,34 @@ import SwiftUI
 /// Design tokens for the monochrome UI. Every color, size, radius and duration used by a view comes from here.
 enum Theme {
     // Color
-    static let background = Color(hex: 0x090909)
-    static let surface = Color(hex: 0x141414)
-    static let input = Color(hex: 0x1B1B1B)
-    static let border = Color(hex: 0x292929)
-    static let hover = Color(hex: 0x242424)
-    static let text = Color(hex: 0xFFFFFF)
-    static let textSecondary = Color(hex: 0xA1A1A1)
-    static let textMuted = Color(hex: 0x666666)
-    static let primaryFill = Color(hex: 0xFFFFFF)
-    static let primaryText = Color(hex: 0x090909)
+    static let background = Color(hex: 0xFFFFFF)
+    static let surface = Color(hex: 0xF7F7F7)
+    static let input = Color(hex: 0xF7F7F7)
+    static let border = Color(hex: 0xE5E5E5)
+    static let hover = Color(hex: 0xEFEFEF)
+    static let pressed = Color(hex: 0xE5E5E5)
+    static let text = Color(hex: 0x000000)
+    static let textSecondary = Color(hex: 0x666666)
+    static let textMuted = Color(hex: 0x707070)
+    static let primaryFill = Color(hex: 0x000000)
+    static let primaryText = Color(hex: 0xFFFFFF)
 
-    // Typography (system font; medium for headings, regular for body)
-    static let title = Font.system(size: 15, weight: .medium)
-    static let heading = Font.system(size: 13, weight: .medium)
+    // Collapsed notch: black to match the hardware notch, whatever the expanded theme is
+    static let notch = Color(hex: 0x000000)
+    static let notchHover = Color(hex: 0x141414)
+    static let notchText = Color(hex: 0xFFFFFF)
+    static let notchTextSecondary = Color(hex: 0xA1A1A1)
+    static let notchTextMuted = Color(hex: 0x666666)
+
+    // Typography (SF Pro through the system font; semibold for headings, medium for controls and labels, regular for body)
+    static let title = Font.system(size: 15, weight: .semibold)
+    static let heading = Font.system(size: 13, weight: .semibold)
+    static let button = Font.system(size: 13, weight: .medium)
     static let body = Font.system(size: 14)
     static let editor = Font.system(size: 16)
+    static let prompt = Font.system(size: 13)
     static let caption = Font.system(size: 12)
+    static let micro = Font.system(size: 10.5, weight: .medium)
     static let mono = Font.system(size: 13, design: .monospaced)
     static let lineSpacing: CGFloat = 3
 
@@ -43,8 +54,19 @@ enum Theme {
     enum Motion {
         static let fast = 0.12
         static let base = 0.2
-        static let panel = 0.22
         static let slow = 0.28
+
+        // The notch surface: springs so a reversal mid-flight keeps its velocity.
+        static let surfaceOpen = Spring(duration: 0.4, bounce: 0.04)
+        static let surfaceClose = Spring(duration: 0.34, bounce: 0)
+
+        // Content fades on its own short curves, out before the surface closes and in once it has room.
+        static let panelContentIn = Animation.easeOut(duration: 0.24).delay(0.07)
+        static let panelContentOut = Animation.easeIn(duration: 0.1)
+        static let compactContentIn = Animation.easeOut(duration: 0.16).delay(0.17)
+        static let compactContentOut = Animation.easeOut(duration: 0.08)
+        static let surfaceColorToPanel = Animation.easeOut(duration: 0.14)
+        static let surfaceColorToNotch = Animation.easeIn(duration: 0.2).delay(0.08)
     }
 }
 
@@ -113,9 +135,9 @@ struct RefynButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(Theme.heading)
+                .font(Theme.button)
                 .opacity(loading ? 0 : 1)
-                .overlay { if loading { ProgressView().controlSize(.small).colorScheme(kind == .primary ? .light : .dark) } }
+                .overlay { if loading { ProgressView().controlSize(.small).colorScheme(kind == .primary ? .dark : .light) } }
                 .padding(.horizontal, Theme.Space.md).frame(minHeight: 28)
                 .foregroundStyle(foreground)
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(fill))
@@ -140,10 +162,19 @@ struct RefynButtonStyle: ButtonStyle {
             case .primary:
                 if !enabled { return loading ? Theme.primaryFill.opacity(0.9) : Theme.hover }
                 return Theme.primaryFill.opacity(pressed ? 0.75 : hovering ? 0.88 : 1)
-            case .secondary: return pressed ? Theme.hover : hovering && enabled ? Theme.hover : Theme.surface
-            case .ghost: return hovering && enabled ? Theme.hover : .clear
+            case .secondary: return pressed ? Theme.pressed : hovering && enabled ? Theme.hover : Theme.background
+            case .ghost: return pressed ? Theme.pressed : hovering && enabled ? Theme.hover : .clear
             }
         }
+    }
+}
+
+/// Dims a plain control while it is held down.
+struct PressDimStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .motion(Theme.Motion.fast, value: configuration.isPressed)
     }
 }
 
@@ -185,7 +216,7 @@ struct IconButton: View {
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(active || (hovering && enabled) ? Theme.hover : .clear))
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressDimStyle())
         .help(help)
         .onHover { hovering = $0 }
         .motion(Theme.Motion.fast, value: hovering)
@@ -219,11 +250,13 @@ struct RTextField: View {
 
     private var fieldControl: some View {
         Group {
-            if secure { SecureField(placeholder, text: $text) } else { TextField(placeholder, text: $text) }
+            if secure { SecureField(placeholder, text: $text, prompt: placeholderText) } else { TextField(placeholder, text: $text, prompt: placeholderText) }
         }
         .textFieldStyle(.plain)
         .font(mono ? Theme.mono : Theme.body)
     }
+
+    private var placeholderText: Text { Text(placeholder).foregroundStyle(Theme.textMuted) }
 }
 
 /// Borderless multi-line editor with a placeholder.
@@ -257,7 +290,7 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-            TextField(placeholder, text: $text).textFieldStyle(.plain).font(Theme.body)
+            TextField(placeholder, text: $text, prompt: Text(placeholder).foregroundStyle(Theme.textMuted)).textFieldStyle(.plain).font(Theme.body)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.textMuted) }
                     .buttonStyle(.plain).help("Clear search").accessibilityLabel("Clear search")
@@ -284,10 +317,11 @@ struct Segmented<T: Hashable>: View {
                     Text(label(option)).font(Theme.caption.weight(.medium))
                         .padding(.horizontal, 10).frame(minHeight: 22)
                         .foregroundStyle(selected ? Theme.text : hovered == option ? Theme.textSecondary : Theme.textMuted)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).fill(selected ? Theme.hover : .clear))
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).fill(selected ? Theme.background : .clear))
+                        .hairlineBorder(Theme.Radius.sm, color: selected ? Theme.border : .clear)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressDimStyle())
                 .onHover { hovered = $0 ? option : nil }
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
@@ -373,13 +407,15 @@ enum StatusKind { case ready, busy, idle }
 struct StatusIndicator: View {
     let kind: StatusKind
     var label: String?
+    var dotColor: Color = Theme.text
+    var ringColor: Color = Theme.textMuted
 
     var body: some View {
         HStack(spacing: 6) {
             switch kind {
-            case .ready: Circle().fill(Theme.text).frame(width: 6, height: 6)
+            case .ready: Circle().fill(dotColor).frame(width: 6, height: 6)
             case .busy: ProgressView().controlSize(.mini).scaleEffect(0.8).frame(width: 10, height: 10)
-            case .idle: Circle().stroke(Theme.textMuted, lineWidth: 1).frame(width: 6, height: 6)
+            case .idle: Circle().stroke(ringColor, lineWidth: 1).frame(width: 6, height: 6)
             }
             if let label { Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
         }
@@ -421,7 +457,7 @@ struct LoadingState: View {
 struct Chip: View {
     let text: String
     var body: some View {
-        Text(text).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+        Text(text).font(Theme.micro).foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
     }
@@ -431,7 +467,7 @@ struct Chip: View {
 struct KeyHint: View {
     let text: String
     var body: some View {
-        Text(text).font(.system(size: 10.5, weight: .medium, design: .rounded)).foregroundStyle(Theme.textMuted)
+        Text(text).font(Theme.micro).foregroundStyle(Theme.textMuted)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).stroke(Theme.border, lineWidth: 1))
     }

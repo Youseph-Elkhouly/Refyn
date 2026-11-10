@@ -21,12 +21,13 @@ struct ComposerView: View {
             }
         }
         .task { await focusEditor() }
+        .onChange(of: model.isExpanded) { if model.isExpanded { Task { await focusEditor() } } }
         .onExitCommand { model.cancelClarification() }
     }
 
     /// The panel becomes key a moment after the view appears, so retry once.
     func focusEditor() async {
-        guard model.clarification == nil else { return }
+        guard model.isExpanded, model.clarification == nil else { return }
         focused = true
         try? await Task.sleep(for: .milliseconds(120))
         if model.clarification == nil { focused = true }
@@ -38,7 +39,7 @@ struct ComposerView: View {
                 .padding(.horizontal, 6)
                 .accessibilityLabel("Prompt")
                 .help("Type your request here. Use ⌘C to copy and ⌘V to paste selected text.")
-            if model.voice.state == .recording || model.voice.state == .transcribing {
+            if model.isExpanded, model.voice.state == .recording || model.voice.state == .transcribing {
                 HStack(spacing: Theme.Space.sm) {
                     if model.voice.state == .recording { Waveform(levels: model.voice.levels); Text("Listening…") }
                     else { StatusIndicator(kind: .busy); Text("Transcribing on this Mac…") }

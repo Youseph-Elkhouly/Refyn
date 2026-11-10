@@ -82,12 +82,18 @@ public enum ContextRetriever {
                 routes: node.routes.prefix(8).map { "\($0.method) \($0.path)" },
                 connectsTo: graph?.edges.filter { $0.source == node.id }.prefix(6).map { "\($0.relation) \(graph?.node($0.target)?.name ?? $0.target)\($0.verification == .confirmed ? "" : " (\($0.verification.rawValue))")" } ?? [])
         }
-        // Notes: only those that share a distinctive word with the request, or all of them when the request asks for notes.
+        // A single broad word (for example "users") is not enough to connect a note to a request.
+        // Notes need two meaningful matches, unless the request names an identifier from the note or explicitly asks for notes.
         let asksForNotes = analysis.text.range(of: #"\bnotes?\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let noteNoise: Set<String> = ["user", "users", "people", "app", "application", "project", "feature", "request", "requests",
+                                      "work", "works", "working", "current", "existing", "new", "system", "data", "information"]
         var budget = maxNotesCharacters
         var noteTexts: [String] = []
         for note in notes where note.includeInContext && budget > 0 {
-            guard asksForNotes || !tokens("\(note.title) \(note.body)").intersection(words).isEmpty else { continue }
+            let noteWords = tokens("\(note.title) \(note.body)")
+            let meaningfulMatches = noteWords.intersection(words).subtracting(noteNoise)
+            let namedIdentifierMatches = identifiers.contains { identifier in noteWords.contains(identifier.lowercased()) }
+            guard asksForNotes || meaningfulMatches.count >= 2 || namedIdentifierMatches else { continue }
             guard let safe = sanitize("\(note.title): \(note.body)") else { continue }
             let text = safe.prefix(budget)
             budget -= text.count

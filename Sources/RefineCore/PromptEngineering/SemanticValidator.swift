@@ -49,15 +49,35 @@ public enum SemanticValidator {
             // "mess up the design" keeps "the design"; "without breaking anything" protects existing behavior as a whole.
             var object = rawObject.replacingOccurrences(of: #"(?i)^up\s+"#, with: "", options: .regularExpression)
             if kind == .preserve, ["anything", "everything", "stuff", "things"].contains(object.lowercased().trimmingCharacters(in: .whitespaces)) { object = "existing behavior" }
+            if kind == .prohibit, Lex.same(verb, "break"), ["anything", "everything", "stuff", "things"].contains(object.lowercased().trimmingCharacters(in: .whitespaces)) { object = "existing behavior" }
             let parts = kind == .limit ? [object]
                 : object.replacingOccurrences(of: #"\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+"#, with: "\u{1}", options: [.regularExpression, .caseInsensitive])
                     .split(separator: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            guard parts.count > 1 else {
-                return [Directive(kind: kind, clause: text, verb: Lex.stem(verb), object: Lex.content(object), objectText: object, limit: limit, unit: unit)]
+            func normalizedBreakTarget(_ raw: String) -> String {
+                let target = raw.trimmingCharacters(in: .whitespaces)
+                return ["anything", "everything", "stuff", "things"].contains(target.lowercased()) ? "existing behavior" : target
             }
-            return parts.map { part in
-                Directive(kind: kind, clause: "\(lead) \(part)".trimmingCharacters(in: .whitespaces), verb: Lex.stem(verb), object: Lex.content(part), objectText: part, limit: limit, unit: unit)
+            func directive(_ part: String, originalClause: String) -> Directive {
+                // "without changing the API or breaking anything" contains two different rules:
+                // preserve the API, and prohibit breaking existing behavior. Do not call "breaking anything" the preserved object.
+                if kind == .preserve,
+                   let brokenTarget = part.captures(#"(?i)^breaking\s+(.+)$"#)?[1],
+                   lead.localizedCaseInsensitiveContains("without") {
+                    let target = normalizedBreakTarget(brokenTarget)
+                    return Directive(kind: .prohibit, clause: "without breaking \(target)", verb: "break",
+                                     object: Lex.content(target), objectText: target, limit: nil, unit: "")
+                }
+                return Directive(kind: kind, clause: originalClause, verb: Lex.stem(verb), object: Lex.content(part), objectText: part, limit: limit, unit: unit)
             }
+            if parts.count == 1 {
+                if kind == .preserve, lead.localizedCaseInsensitiveContains("without"), Lex.same(verb, "break") {
+                    let target = normalizedBreakTarget(object)
+                    return [Directive(kind: .prohibit, clause: "without breaking \(target)", verb: "break",
+                                      object: Lex.content(target), objectText: target, limit: nil, unit: "")]
+                }
+                return [directive(object, originalClause: text)]
+            }
+            return parts.map { part in directive(part, originalClause: "\(lead) \(part)".trimmingCharacters(in: .whitespaces)) }
         }
         func isChange(_ verb: String) -> Bool { Lex.changeVerbs.contains { Lex.same($0, verb) } }
         if let m = text.captures(#"^(?:don'?t|do not)\s+mess up\s+(.+)$"#) {
@@ -67,7 +87,11 @@ public enum SemanticValidator {
             return isChange(m[2]) ? make(.preserve, lead: "\(m[1]) \(m[2])", object: m[3]) : make(.prohibit, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
         }
         if let m = text.captures(#"^(without)\s+(\w+)\s*(.*)$"#) {
-            return isChange(m[2]) ? make(.preserve, lead: "\(m[1]) \(m[2])", object: m[3]) : make(.prohibit, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
+            if Lex.same(m[2], "break") {
+                return make(.prohibit, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
+            }
+            return isChange(m[2]) ? make(.preserve, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
+                : make(.prohibit, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
         }
         if let m = text.captures(#"^(keep|preserve|leave|maintain|retain)\s+(.*?)(?:\s+(?:unchanged|as is|the same))?$"#), !m[2].isEmpty {
             return make(.preserve, lead: m[1], object: m[2])
@@ -201,6 +225,12 @@ public enum SemanticValidator {
                 if exclusive, !novelStatus.isEmpty { return Finding(severity: .delete, reason: "narrows the behavior to \(novelStatus.joined(separator: ", ")), which the request did not say") }
                 if exclusive, !observing, let trigger, !Lex.mentions(words, trigger) { return Finding(severity: .delete, reason: "restricts the behavior without covering \"\(trigger)\", which the request is about") }
                 // "Retries occur only on timeout and network failures": exclusivity the user never gave, with a condition they never named.
+                if exclusive, kind.isOutcome, !marked,
+                   let at = words.lastIndex(where: { ["only", "exclusively", "solely", "just"].contains($0) }),
+                   at == words.endIndex - 1,
+                   !requestWords.contains(where: { ["only", "exclusively", "solely", "just"].contains($0) }) {
+                    return Finding(severity: .delete, reason: "turns a reported condition into an exclusive rule the request did not state")
+                }
                 if exclusive, kind.isOutcome, !marked, let at = words.firstIndex(where: { ["only", "exclusively", "solely", "just"].contains($0) }) {
                     let novel = words[(at + 1)...].filter { w in !Lex.stop.contains(w) && w.count > 2 && !requestWords.contains { Lex.same($0, w) } }
                     if !novel.isEmpty { return Finding(severity: .demote, reason: "adds an exclusive condition (\(novel.prefix(3).joined(separator: ", "))) that the request did not give") }
@@ -232,6 +262,22 @@ public enum SemanticValidator {
 
         /// Returns the item with offending clauses removed or rewritten; nil when nothing is left.
         func process(_ item: String, kind: ListKind, listName: String) -> String? {
+            if kind == .suggestion {
+                let stripped = item.replacingOccurrences(of: #"(?i)^\s*(?:investigate\s+(?:the\s+)?reported\s+(?:behavior|symptom)|reported\s+(?:behavior|symptom))\s*:\s*"#,
+                                                          with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                let directiveOnly = !stripped.isEmpty && !clauses(stripped).isEmpty && clauses(stripped).allSatisfy { !parse($0).isEmpty }
+                if directiveOnly || (!parse(item).isEmpty && stripped == item.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    corrections.append(Correction(list: listName, original: item, clause: item, action: .removed,
+                                                  reason: "a user constraint belongs in Constraints, not symptom or approach guidance"))
+                    return nil
+                }
+            }
+            if kind == .constraint,
+               item.range(of: #"(?i)^\s*unchanged\s*:\s*breaking\s+(?:anything|everything|stuff|things)\s*[.!]?\s*$"#, options: .regularExpression) != nil {
+                corrections.append(Correction(list: listName, original: item, clause: item, action: .removed,
+                                              reason: "rewrote a malformed preservation label as a no-break rule from the request"))
+                return nil
+            }
             let pieces = Clause.split(item)
             var kept: [Clause] = []
             var changed = false
@@ -339,12 +385,26 @@ public enum SemanticValidator {
             let criterion: String
             switch d.kind {
             case .prohibit:
-                criterion = "In exercised cases, the code does not \(d.verb) \(object)."
+                if d.verb == "break", ["existing behavior", "existing functionality"].contains(object.lowercased()) {
+                    criterion = "Previously working behavior remains unchanged in the reproduced scenarios."
+                } else {
+                    criterion = "In exercised cases, the code does not \(d.verb) \(object)."
+                }
             case .preserve:
                 if Lex.isInterface(d.object) {
                     criterion = "Unchanged contract: \(object) keeps its existing signature and behavior; only the internal implementation may change."
+                } else if d.object.contains(where: { word in ["ui", "ux", "interface", "screen", "layout", "design", "style", "theme"].contains { Lex.same(word, $0) } }) {
+                    let visualObject = object.replacingOccurrences(of: #"(?i)^(?:(?:the|current|existing)\s+)+"#, with: "", options: .regularExpression)
+                    criterion = "Preserve the current \(visualObject) while fixing the reported issue."
+                } else if object.localizedCaseInsensitiveContains("filter"), object.localizedCaseInsensitiveContains("applied") {
+                    let filters = object
+                        .replacingOccurrences(of: #"(?i)^(?:(?:the|current|existing|active)\s+)+"#, with: "", options: .regularExpression)
+                        .replacingOccurrences(of: #"(?i)\s+applied$"#, with: "", options: .regularExpression)
+                    criterion = "\(tidy(filters)) continue to apply."
                 } else if d.object.contains(where: { o in Lex.interfaceWords.contains { Lex.same($0, o) } }) {
                     criterion = "Unchanged: \(object), with no new elements, states, text or behavior added to it."
+                } else if d.object.contains(where: { objectWord in ["functionality", "behavior", "behavioral"].contains { Lex.same(objectWord, $0) } }) {
+                    criterion = "Existing functionality remains unchanged in the exercised cases."
                 } else {
                     criterion = "Unchanged: \(object), with nothing added, removed or altered beyond what the request names."
                 }
@@ -355,7 +415,8 @@ public enum SemanticValidator {
                     : "No more than \(n) \(d.unit)."
             }
             let check = d.kind == .limit ? [Lex.stem(d.unit), "total"] + d.object : d.core
-            if !covered(check, by: plan.successCriteria, threshold: d.kind == .limit ? 0.99 : 0.6, needsMarker: needsMarker) { plan.successCriteria.append(criterion) }
+            let usefulCriteria = plan.successCriteria.filter { !PromptQuality.genericCriterion($0) }
+            if !covered(check, by: usefulCriteria, threshold: d.kind == .limit ? 0.99 : 0.6, needsMarker: needsMarker) { plan.successCriteria.append(criterion) }
         }
 
         if let trigger = failureTrigger(in: request), let addition = requestedAddition(in: request),
@@ -392,10 +453,14 @@ public enum SemanticValidator {
         }
 
         if plan.codeReferences.isEmpty, !plan.tasks.isEmpty, [.bugfix, .feature, .performance, .refactor, .ui].contains(plan.taskType) {
-            let locating = ["locate", "find", "identify", "inspect", "read", "review", "audit", "survey", "examine", "map"]
-            if !plan.tasks.contains(where: { t in locating.contains { t.title.lowercased().hasPrefix($0) } }) {
-                plan.tasks.insert(PlanTask(id: "t0", title: "Locate the code that implements this",
-                                           detail: "No file has been confirmed as relevant; find the real implementation before changing anything."), at: 0)
+            let locating = #"(?i)^(?:locate|find|identify|inspect|read|review|audit|survey|examine|map|reproduce|trace|analy[sz]e|investigate|profile|measure)\b"#
+            if let index = plan.tasks.firstIndex(where: { $0.title.range(of: locating, options: .regularExpression) != nil }) {
+                if !plan.tasks[index].detail.localizedCaseInsensitiveContains("relevant code path") {
+                    plan.tasks[index].detail = ["Locate the relevant code path.", plan.tasks[index].detail].filter { !$0.isEmpty }.joined(separator: " ")
+                }
+            } else {
+                plan.tasks.insert(PlanTask(id: "t0", title: "Locate the relevant implementation",
+                                           detail: "Find the code path responsible for the reported behavior before making changes."), at: 0)
             }
         }
 
@@ -483,11 +548,14 @@ enum Lex {
         return ui && visibleThings.contains { mentions(words, $0) }
     }
 
-    static func isInterface(_ object: [String]) -> Bool { object.contains { o in apiWords.contains { same($0, o) } } }
+    /// `interface` alone usually means a UI here; only explicit contract terms select API-preservation wording.
+    static func isInterface(_ object: [String]) -> Bool {
+        object.contains { o in ["api", "signature", "endpoint", "contract", "protocol"].contains { same($0, o) } }
+    }
 
     /// Words that already say "don't", "keep" or "unchanged", so the item is not asking for the opposite.
     static func hasMarker(_ item: String) -> Bool {
-        item.range(of: #"(?i)\b(?:not|never|no|without|avoid|unchanged|preserve[sd]?|keep|kept|remain[s]?|stay[s]?|still|intact|continues?|non|except|excluding|besides|skip(?:s|ping)?)\b|n['’]t\b|as before|as is|other than|rather than|instead of"#, options: .regularExpression) != nil
+        item.range(of: #"(?i)\b(?:not|never|no|cannot|cant|can't|without|avoid|unchanged|preserve[sd]?|keep|kept|remain[s]?|stay[s]?|still|intact|continues?|non|except|excluding|besides|skip(?:s|ping)?)\b|n['’]t\b|as before|as is|other than|rather than|instead of"#, options: .regularExpression) != nil
     }
 
     static let concreteOutcomeWords = ["retry", "retried", "succeed", "queue", "show", "display", "return", "throw", "block", "disable", "resume", "abort", "cancel"]

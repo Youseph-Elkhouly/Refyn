@@ -8,11 +8,15 @@ struct ResultView: View {
     @State private var stage = -1
     @State private var isEditing = false
     @State private var editedText = ""
+    @State private var isAddingContext = false
+    @State private var additionalContext = ""
+    @FocusState private var contextFocused: Bool
 
     var body: some View {
         if let plan = model.plan {
             VStack(alignment: .leading, spacing: 0) {
                 original(plan)
+                if isAddingContext { addContextEditor(plan) }
                 Hairline()
                 toolbar(plan)
                 ZStack {
@@ -22,12 +26,12 @@ struct ResultView: View {
                             case .prompt:
                                 if isEditing {
                                     TextEditor(text: $editedText)
-                                        .font(Theme.mono)
+                                        .font(Theme.prompt)
                                         .scrollContentBackground(.hidden)
                                         .foregroundStyle(Theme.text)
                                         .accessibilityLabel("Edit optimized prompt")
                                 } else {
-                                    Text(currentText(plan)).font(Theme.mono).lineSpacing(Theme.lineSpacing)
+                                    Text(currentText(plan)).font(Theme.prompt).lineSpacing(Theme.lineSpacing)
                                 }
                             case .plan: PlanDetails(plan: plan)
                             }
@@ -44,7 +48,15 @@ struct ResultView: View {
                 Hairline()
                 actions(plan)
             }
-            .onChange(of: plan.id) { stage = -1; tab = .prompt; isEditing = false; editedText = "" }
+            .onChange(of: plan.id) {
+                stage = -1
+                tab = .prompt
+                isEditing = false
+                editedText = ""
+                additionalContext = ""
+                isAddingContext = false
+                contextFocused = false
+            }
         } else {
             EmptyState(symbol: "text.append", title: "No prompt yet", detail: "Write a request and choose Optimize.", actionTitle: "Open editor") { model.route = .compose }
         }
@@ -57,6 +69,20 @@ struct ResultView: View {
                 Text(plan.originalPrompt).font(Theme.body).foregroundStyle(Theme.textSecondary).lineLimit(2).textSelection(.enabled)
             }
             Spacer(minLength: 0)
+            RButton(title: isAddingContext ? "Cancel" : "Add context", symbol: isAddingContext ? "xmark" : "plus", kind: .ghost) {
+                isAddingContext.toggle()
+                if isAddingContext {
+                    tab = .prompt
+                    stage = -1
+                    isEditing = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { contextFocused = true }
+                } else {
+                    additionalContext = ""
+                    contextFocused = false
+                }
+            }
+            .disabled(model.isOptimizing)
+            .help("Add a detail and update this optimized prompt")
             RButton(title: "Edit", symbol: "pencil", kind: .ghost) { model.route = .compose }.help("Back to the editor with your text")
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
@@ -71,6 +97,7 @@ struct ResultView: View {
                 }
                 Spacer()
                 Chip(text: plan.provider == "local" ? "Local rules" : plan.provider == LocalModelManager.modelID ? "Qwen3 · on-device" : plan.provider)
+                if plan.revisionOf != nil { Chip(text: "Updated") }
                 Chip(text: plan.taskType.rawValue)
                 if !plan.validation.passed {
                     Chip(text: plan.validation.repaired ? "Original quoted" : "Check intent")
@@ -80,6 +107,44 @@ struct ResultView: View {
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    func addContextEditor(_ plan: PromptPlan) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            FieldLabel("What did you remember?")
+            REditor(text: $additionalContext, placeholder: "Add a detail to include in this prompt…", font: Theme.body, inset: 8, focus: $contextFocused)
+                .frame(height: 62)
+                .padding(4)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(Theme.input))
+                .hairlineBorder(Theme.Radius.md)
+                .disabled(model.isOptimizing)
+                .accessibilityLabel("Additional prompt context")
+
+            HStack(spacing: Theme.Space.sm) {
+                Text("The earlier result stays in prompt history.")
+                    .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                Spacer()
+                RButton(title: model.isOptimizing ? "Cancel" : "Re-optimize", symbol: model.isOptimizing ? "xmark" : "arrow.clockwise", kind: .primary) {
+                    if model.isOptimizing {
+                        model.cancelOptimization()
+                    } else {
+                        let priorID = plan.id
+                        Task {
+                            await model.reoptimizeAddingContext(additionalContext)
+                            if model.plan?.id != priorID {
+                                additionalContext = ""
+                                isAddingContext = false
+                                contextFocused = false
+                            }
+                        }
+                    }
+                }
+                .disabled(!model.isOptimizing && additionalContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .motion(Theme.Motion.base, value: isAddingContext)
     }
 
     func actions(_ plan: PromptPlan) -> some View {

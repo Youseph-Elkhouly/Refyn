@@ -23,6 +23,24 @@ private struct SequencedProvider: LLMProvider {
     func plan(for request: OptimizationRequest) async throws -> ModelPlan { await state.next(request) }
 }
 
+private actor CapturedOptimizationRequest {
+    private(set) var value: OptimizationRequest?
+    func save(_ request: OptimizationRequest) { value = request }
+}
+
+private struct RevisionProvider: LLMProvider {
+    let identifier = "revision-test"
+    let capture: CapturedOptimizationRequest
+    func plan(for request: OptimizationRequest) async throws -> ModelPlan {
+        await capture.save(request)
+        return ModelPlan(intent: request.analysis.intent, taskType: "feature", role: "",
+                         objective: "Add CSV export with archived records.",
+                         confirmedRequirements: ["Include archived records in the export."],
+                         tasks: [.init(id: "t1", title: "Update the export to include archived records")],
+                         successCriteria: ["The CSV export includes archived records."])
+    }
+}
+
 extension ModelPlan {
     static func sample(paths: [String] = ["src/services"], tasks: [Task]? = nil) -> ModelPlan {
         ModelPlan(intent: "Add pagination to listUsers", taskType: "feature", role: "You are a senior engineer working on the users service.",
@@ -54,6 +72,36 @@ final class PromptEngineeringTests: XCTestCase {
     func testGeneratedPlanDropsParaphrasedConstraintsAndSuggestions() {
         XCTAssertTrue(PromptOptimizer.semanticallySimilar("No changes to upload API", "Do not change upload API"))
         XCTAssertEqual(PromptOptimizer.nonRedundant(["No retry for 4xx responses"], against: ["Do not retry 4xx responses"]), [])
+    }
+
+    func testReoptimizationIntegratesAddedContextAndPreviousDraftAsRevision() async throws {
+        let previousID = UUID()
+        let previousDraft = "## Objective\nAdd CSV export for filtered reports.\n\n## Verification\nCompare the exported rows with the active filters."
+        let rememberedDetail = "Include archived records in the export."
+        let requestText = "Add CSV export for filtered reports.\n\nAdditional context from you:\n\(rememberedDetail)"
+        let capture = CapturedOptimizationRequest()
+        let optimizer = PromptOptimizer(provider: RevisionProvider(capture: capture))
+        let input = PromptOptimizer.Input(text: requestText, mode: .advanced,
+                                          previousOptimizedPrompt: previousDraft,
+                                          previousConfirmedRequirements: ["Keep the active report filters applied."],
+                                          revisionOf: previousID)
+
+        let result = try await optimizer.optimize(input)
+        let capturedValue = await capture.value
+        let sent = try XCTUnwrap(capturedValue)
+
+        XCTAssertEqual(result.revisionOf, previousID)
+        XCTAssertNotEqual(result.id, previousID)
+        XCTAssertTrue(result.originalPrompt.contains(rememberedDetail))
+        XCTAssertTrue(result.optimizedPrompt.contains("archived records"))
+        XCTAssertTrue(sent.modelPrompt.contains("<previous_optimized_draft_untrusted>"))
+        XCTAssertTrue(sent.modelPrompt.contains("Compare the exported rows with the active filters."))
+        XCTAssertTrue(sent.modelPrompt.contains("<previous_user_confirmed_requirements>"))
+        XCTAssertTrue(sent.modelPrompt.contains("Keep the active report filters applied."))
+
+        let withoutPrevious = PromptOptimizer(provider: RevisionProvider(capture: CapturedOptimizationRequest()))
+        let baseKey = withoutPrevious.cacheKey(for: .init(text: requestText, mode: .advanced))
+        XCTAssertNotEqual(baseKey, optimizer.cacheKey(for: input), "A revision input must not hit the original request cache.")
     }
 
     func testVagueBugfixAsksForMissingDetailsDeterministically() {
@@ -135,7 +183,7 @@ final class PromptEngineeringTests: XCTestCase {
         let openQuestion = "What did you expect, and what happened instead?"
         let optimizer = PromptOptimizer(provider: nil)
         let plan = try await optimizer.optimize(.init(text: "fix the login bug", mode: .advanced, userAnswers: [answer], unansweredQuestions: [openQuestion]))
-        XCTAssertTrue(plan.confirmedRequirements.contains { $0.contains(answer.answer) })
+        XCTAssertTrue(plan.confirmedRequirements.contains { $0.contains(answer.answer) }, "Clarification answers are user-confirmed data and must survive symptom classification: \(plan.confirmedRequirements)")
         XCTAssertTrue(plan.missingInformation.contains(openQuestion))
         XCTAssertFalse(plan.optimizedPrompt.contains("Open questions"))
         XCTAssertFalse(plan.optimizedPrompt.contains(openQuestion))
@@ -235,7 +283,7 @@ final class PromptEngineeringTests: XCTestCase {
         XCTAssertEqual(plan.suggestedDecisions, ["Use a cursor on the id column", "GET /api/users/:id still returns a user"])
         XCTAssertTrue(plan.optimizedPrompt.contains("## Requirements (stated by the user)"))
         XCTAssertTrue(plan.optimizedPrompt.contains("## Suggested approach"))
-        XCTAssertTrue(plan.optimizedPrompt.contains("2. Add cursor param (after 1)"))
+        XCTAssertTrue(plan.optimizedPrompt.contains("- Add cursor param (after 1)"))
         XCTAssertEqual(plan.codeReferences.map(\.path), ["src/services"])
     }
 
@@ -367,7 +415,7 @@ final class PromptEngineeringTests: XCTestCase {
         let request = "make search faster but don't change the result order or the public API"
         let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated))).optimize(.init(text: request, mode: .auto))
         XCTAssertFalse(plan.constraints.contains(request))
-        XCTAssertEqual(plan.constraints.count, 2)
+        XCTAssertEqual(plan.constraints.count, 2, "Constraint merge should emit each boundary once: \(plan.constraints)")
     }
 
     func testOneSlippedBracketDoesNotDiscardTheGeneration() throws {

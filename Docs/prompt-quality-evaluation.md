@@ -187,3 +187,44 @@ Raw responses and intermediate stages are in `/tmp/refyn-quality-final-run.txt`;
 ### Remaining limitations
 
 The heuristic acceptance-criterion gate does not prove every generated task is technically correct or tightly scoped. Human review still found the four over-specific cases above, and the longest prompts remain repetitive. Do not treat 9/9 automated checks as 9/9 human-rated quality passes. No workspace-context live-model run or UI interaction test was performed in this pass.
+
+## Semantic-accuracy follow-up — 2026-11-10
+
+The follow-up adds the exact database request to `FinalEvaluationTests` plus UI, API, refactor, retry, and feature controls, for 16 total requests. One Qwen3-4B sample was run on the same set before and after the deterministic repairs. Three simple prompts used local deterministic rules; the other 13 used one model call each.
+
+| Measure | First 16-case run | Final 16-case run |
+|---|---:|---:|
+| Model-backed mean latency | 11.32s | 15.88s |
+| Model calls / fallbacks / retries | 13 / 0 / 0 | 13 / 0 / 0 |
+| Intent marker failures | 1 | 0 |
+| Contradictory output markers | 1 | 0 |
+| Generic acceptance criteria | 1 | 0 |
+| Invalid task dependency graphs | 0 | 0 |
+| JSON bracket repairs / unusable output | 0 / 0 | 2 / 0 |
+
+The first intent marker failure was a phrase mismatch (`intermittently fail` vs `intermittent failures`), not a lost symptom. The final evaluation accepts that equivalent wording and checks `timeout under concurrent users`. Latency was **4.56s slower** in the final single sample; the local quality gate makes no second inference call, and these single runs are too noisy to establish a speed change. Final model-backed latency was 15.88s mean, 17.5s median, 23.5s p95.
+
+### Database request: before and after
+
+Before, the model's “Check connection and transaction settings” task directed the agent to “optimize connection pooling and transaction isolation levels” before any evidence. Verification also asked both to monitor metrics and repeat the workload, while acceptance included “No new errors or failures in the database layer.” The reproduction step conflated symptoms and diagnosis.
+
+After, the rendered prompt keeps the constraints under Constraints, separates reproduction from diagnosis, treats query optimization and indexes as candidates pending profiling evidence, and compares the same concurrent workload before and after without inventing a target. The relevant final excerpt:
+
+~~~text
+Reproduce the issue — Identify the steps and conditions that cause the database to slow, fail, or timeout under concurrent users.
+Review connection pooling settings — Inspect the current behavior and gather evidence; treat changes as candidates until the cause is confirmed.
+Analyze database performance — Inspect query plans and access patterns, pool waits or exhaustion, lock contention, timeout evidence, and resource saturation as candidate causes. Consider indexes only when query-plan evidence supports them.
+Repeat the same concurrent workload before and after; record latency and timeout/failure observations without inventing a target.
+~~~
+
+The replay trace retained the raw/parsed/schema/semantic/guarded/final stages; the final live set had 16/16 intent markers, zero contradictions, zero generic criteria, zero invalid graphs, zero fallback, and zero model retries. Two responses needed JSON bracket repair and remained usable. These automated checks are not a human technical-accuracy score.
+
+The app also now has opt-in macOS completion notifications in Settings › Model › Prompts. Permission is requested when enabled; the alert contains no prompt text, appears while Refyn is active, and clicking it expands the panel. Prompt history browsing, reopening, reuse, and copy were already present and remain covered by persistence/search tests. Notification permission and click behavior were compile-checked but not manually exercised in a desktop session.
+
+The result view now lets users add remembered context and re-optimize the current prompt. The previous optimized draft is passed to the local model as a bounded revision reference, while the new detail and prior user-confirmed requirements remain separate from generated suggestions. Each successful revision has a new plan ID with `revisionOf` pointing to the prior result, so both versions remain searchable in history. Regression coverage checks model input, lineage, cache separation, and persistence. A live Qwen revision check passed in 18.78s and retained both the new archived-project detail and the prior date-filter requirement.
+
+Artifacts: `/tmp/refyn-semantic-final.txt` is the first run, `/tmp/refyn-semantic-verified.txt` is the final run. The focused regression tests cover trailing “only” restrictions, negation with “cannot”, simple requests with generic criteria, database symptom separation, premature remedies, and criteria duplication.
+
+### Final build and suite
+
+`swift build` passed. Final `swift test` passed with 169 tests, 17 opt-in skips, and 0 failures. The first full-suite attempt exposed that eager construction of `UNUserNotificationCenter.current()` crashes in XCTest when the process has no app bundle; `CompletionNotificationService` now accesses the center lazily when notifications are enabled. The subsequent full suite passed. Notification permission dialogs and clicking a notification were not manually exercised.

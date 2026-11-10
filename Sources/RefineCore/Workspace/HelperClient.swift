@@ -213,6 +213,9 @@ public actor HelperClient {
     public static func locateNode(override: String?) throws -> String {
         let fm = FileManager.default
         if let override { if fm.isExecutableFile(atPath: override) { return override }; throw HelperError.nodeNotFound }
+        if let bundled = Bundle.main.resourceURL?.appending(path: "Node/bin/node"), fm.isExecutableFile(atPath: bundled.path) {
+            return bundled.path
+        }
         let home = fm.homeDirectoryForCurrentUser.path
         var candidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "\(home)/.volta/bin/node", "\(home)/.local/share/fnm/aliases/default/bin/node", "/usr/bin/node"]
         // nvm installs one directory per version; prefer the newest.

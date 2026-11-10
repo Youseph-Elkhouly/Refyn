@@ -93,6 +93,41 @@ final class LocalInferenceTests: XCTestCase {
     }
 
     @MainActor
+    func testReoptimizationMergesRememberedContextWithPriorDraft() async throws {
+        guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
+            throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the live local-model revision check.")
+        }
+        let manager = LocalModelManager()
+        await manager.install()
+        let priorID = UUID()
+        let previousDraft = """
+        ## Objective
+        Add CSV export for monthly reports.
+
+        ## Requirements
+        - Keep the current date filters applied.
+
+        ## Verification
+        Compare the exported rows with the active report filters.
+        """
+        let addedContext = "The export also needs to include archived projects, labeled as archived."
+        let request = "Add CSV export for monthly reports.\n\nAdditional context from you:\n\(addedContext)"
+        let plan = try await PromptOptimizer(provider: LocalLLMProvider(manager: manager)).optimize(.init(
+            text: request,
+            mode: .advanced,
+            previousOptimizedPrompt: previousDraft,
+            previousConfirmedRequirements: ["Keep the current date filters applied."],
+            revisionOf: priorID
+        ))
+
+        print("Live Qwen revised prompt:\n\(plan.optimizedPrompt)")
+        XCTAssertEqual(plan.revisionOf, priorID)
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("archived"))
+        XCTAssertTrue(plan.optimizedPrompt.localizedCaseInsensitiveContains("date filter"))
+        XCTAssertLessThan(plan.optimizedPrompt.count, 5_000)
+    }
+
+    @MainActor
     func testQwenOptimizesClarifiedShortFeatureInsteadOfEchoing() async throws {
         guard ProcessInfo.processInfo.environment["REFINE_RUN_LOCAL_MODEL_EVALUATION"] == "1" else {
             throw XCTSkip("Set REFINE_RUN_LOCAL_MODEL_EVALUATION=1 to run the local Qwen output-quality check.")

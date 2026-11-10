@@ -1,91 +1,131 @@
 # Refyn
 
-**Better prompts. On-device.**
+**Better prompts, made on your Mac.**
 
-Refyn is a native macOS assistant that lives in the notch, turns rough instructions into prompts for coding agents, and uses selected workspace metadata and notes for relevant context. Prompt inference runs locally through MLX Swift; there are no API keys, cloud inference requests, or per-prompt charges.
+Refyn is a native macOS prompt assistant that lives in the notch. It turns rough requests into useful prompts for coding agents, using a local Qwen model and optional context from a workspace you choose. Optimization and dictation run on-device—no API key, cloud inference, or per-prompt fee.
 
-Open with Control-Option-Space, choose a workspace, type or dictate, Optimize, compare, then copy or save.
+## Download
+
+Get the Apple Silicon QA preview from [GitHub Releases](https://github.com/Youseph-Elkhouly/Refyn/releases/latest). The app package includes the English WhisperKit Base voice model. The same release provides Qwen3 4B as split model assets for offline setup; use the included install guide, or download the model from Settings the first time you run Refyn. The preview is ad-hoc signed and not notarized.
+
+## Get started
+
+1. Open Refyn with **Control–Option–Space**.
+2. Choose a workspace if you want project context. You can also use Refyn without one.
+3. Type or paste a request, or dictate with the microphone button or **Control–Option–D**.
+4. Choose **Auto**, **Basic**, **Advanced**, or **Custom**, then select **Optimize**.
+5. Review the result, edit it, copy it, or save it.
+
+If Qwen is not already installed, open **Settings › Model** and download it. The download is about 2.3 GB and requires internet once; after it finishes, optimization works offline. Refyn may ask a few short questions when a request is missing important details. Turn this off under **Settings › Model › Prompts**.
+
+### Prompt modes
+
+| Mode | What it does |
+| --- | --- |
+| **Auto** | Keeps simple requests concise and adds structure when the task needs it. |
+| **Basic** | Clarifies the request without unnecessary scaffolding. |
+| **Advanced** | Adds implementation steps and verification when useful. |
+| **Custom** | Lets you choose techniques such as examples, task breakdown, or acceptance criteria. |
+
+## Useful features
+
+- **Prompt history:** Search earlier results, reopen them, copy them, or reuse them.
+- **Add context:** Add a detail you remembered to an optimized prompt and optimize it again. Refyn saves the new result as a revision and keeps the earlier version in history.
+- **Completion alerts:** Opt in under **Settings › Model › Prompts** to receive a macOS notification when optimization finishes.
+- **Workspace notes:** Use notes and relevant project context to make prompts more specific. Refyn retrieves bounded context instead of sending whole repository files to the model.
+
+## Models and privacy
+
+- **Prompt optimization:** Qwen3 4B, 4-bit quantized, runs locally through MLX on Apple Silicon. Download it in Settings or install the split archive from the [GitHub release](https://github.com/Youseph-Elkhouly/Refyn/releases/latest). The weights are stored in Refyn’s Application Support folder. An optional smaller Qwen3 model is available in Settings.
+- **Voice dictation:** Release packages include the English WhisperKit Base model, so dictation is ready offline. Source builds can download a speech model from **Settings › Voice**. Tiny and Small English models are also available there.
+- **Audio:** Recording starts only when you request dictation. Speech is transcribed on this Mac and is not sent to the language model automatically.
+- **Workspace context:** Analysis stays local. Refyn uses relevant project metadata, symbols, file paths, notes, and instructions; it excludes secrets and generated files and does not write to the selected repository.
 
 ## Requirements
 
-- macOS 14+ on Apple Silicon, Xcode 16 / Swift 6
-- About 8 GB of available unified memory recommended for Qwen3 4B 4-bit
-- About 2.3 GB disk space for the model download
-- Node.js 20+ for workspace analysis
-- Git optional; improves workspace file discovery
+- macOS 14 or later on Apple Silicon
+- About 8 GB of available unified memory recommended for Qwen3 4B
+- About 2.3 GB of free disk space for the Qwen model download
+- Xcode 16 and Swift 6 to build from source
+- Node.js 20 or later to build the workspace helper from source; release packages include Node.js
+- Git is optional and improves workspace file discovery
 
-The model is downloaded from https://huggingface.co/mlx-community/Qwen3-4B-4bit, stored in the Refyn Application Support folder, and loaded locally. First setup requires internet; optimization works offline after the download completes.
+## Build and package
 
-## Build and run
+Build the app locally:
 
-Run Scripts/build-app.sh to build the helper, Swift app, MLX Metal kernels, and .build/Refyn.app. Then open .build/Refyn.app.
+```sh
+Scripts/build-app.sh release
+open .build/Refyn.app
+```
 
-Development checks:
+Create an Apple Silicon QA release with a portable Node runtime, bundled English voice model, app ZIP and DMG, split Qwen model assets, install instructions, and SHA-256 checksums:
 
-- In RefineHelper, run npm ci and npm test.
-- Run swift build and swift test for Swift app/core tests.
+```sh
+Scripts/package-release.sh 0.1.0
+```
 
-The Qwen integration test downloads the model once and runs real on-device generation, including after unloading and reloading in offline mode. It takes several minutes on first run. The SwiftPM test runner does not discover MLX's Metal shader bundle automatically, so stage the shaders after building the tests:
+Files are written to `.build/release-package/`. Packaging expects the WhisperKit English Base and Qwen3 4B models to already be downloaded. Override their directories when needed:
 
-- Run swift test; the integration test skips unless opted in.
-- Run Scripts/build-mlx-metallib.sh to compile and stage MLX Metal kernels.
-- Run REFINE_RUN_LOCAL_MODEL_INTEGRATION=1 swift test --filter LocalInferenceTests/testDownloadAndRunModelThenRunOffline.
-- Run REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testPromptEngineeringBaselineEvaluation for the original eight-case quality baseline.
-- Run REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testClarificationQualityEvaluationEightUnderspecifiedAndTwoClearRequests for the clarification and unsupported-specifics evaluation.
+```sh
+REFYN_SPEECH_MODEL_DIR="/path/to/openai_whisper-base.en" \
+REFYN_QWEN_MODEL_DIR="/path/to/Qwen3-4B-4bit" \
+Scripts/package-release.sh 0.1.0
+```
 
-The original baseline covers rough features, ambiguity, a complex feature, bug fixing, refactoring, a short rename, a verification workflow, and image-upload retries. In the current Apple Silicon run, all eight retained their required request terms, no unverified code references survived, the short request stayed at 23 characters, and all four sufficiently specified cases marked for structured work produced tasks and verification. The seven model-backed cases averaged 12.1 seconds; the clear rename completed deterministically in under 0.01 seconds. The vague authentication request kept its questions open and did not receive an invented task plan.
+Set `REFYN_QWEN_MODEL_DIR` as well if the Qwen model is outside Refyn’s default Application Support folder. The app ZIP includes the English voice model. Qwen’s roughly 2.1 GB weights are supplied as a split archive beside the app; download every part, join them, and follow the generated `Refyn-0.1.0-Qwen3-4B-4bit-Install.txt` to use Qwen without a first-run model download. The archive is split because GitHub limits each release asset to less than 2 GiB. Qwen can also be downloaded from Settings. QA packages are ad-hoc signed and not notarized. A public release requires Developer ID signing and Apple notarization.
 
-Clarification baseline, measured on eight underspecified requests (bug fix, feature, performance, refactor, tests, UI, docs, configuration) plus two clear controls:
+## Development checks
 
-| Measure | Before checklist | After checklist and guard |
-|---|---:|---:|
-| Expected gaps detected | 0/8 | 8/8 |
-| Unsupported concrete specifics surviving | Not measured in the earlier run | 0/8 |
-| Original request specifics preserved | Not measured in the earlier run | 8/8 |
-| Clear controls without questions | 2/2 | 2/2 |
-| Mean local generation latency | ~9.8s across the earlier 10-case run | 6.52s across the eight underspecified cases |
+Build the helper and run its tests, then build and test the Swift app:
 
-The before figures came from an earlier 10-case run and are not a paired replay of this exact dataset. The after check uses the local model with gaps passed as unanswered checklist questions; its deterministic guard checks names, paths, URLs, quoted text, library names, and numbers. It does not establish that every ungrounded natural-language suggestion is absent. The 8/8 measured results do not justify fine-tuning.
+```sh
+(cd RefineHelper && npm ci && npm test)
+swift build
+swift test
+```
 
-Existing Refine data moves to the Refyn Application Support folder on first launch; the database, speech models, workspace data, and downloaded Qwen model are preserved. First launch: the notch appears as a small pill, or at the top center on a display without a notch. Choose Settings › Model › Download model, then optimize prompts. A workspace is optional. Add one from the workspace menu to include relevant project context. Download a speech model in Settings › Voice to dictate (hold Control-Option-D).
+The real Qwen tests are opt-in and require the model to be installed. To run the offline load-and-generation test, first build and stage the MLX Metal kernels:
 
-## Architecture
+```sh
+Scripts/build-mlx-metallib.sh
+REFINE_RUN_LOCAL_MODEL_INTEGRATION=1 swift test --filter LocalInferenceTests/testDownloadAndRunModelThenRunOffline
+```
 
-- RefineCore contains prompt plans, workspace models, context retrieval, persistence, and prompt engineering.
-- The SwiftUI and AppKit app contains the notch, settings, workspace views, and local model/audio services.
-- The Node.js / TypeScript helper performs local workspace analysis through a versioned JSON-lines protocol.
-- SharedSchemas contains the helper protocol and CodebaseGraph schema.
+Run the prompt baselines with Qwen installed:
 
-The model layer is modular behind LLMProvider. Qwen3 returns a structured plan, and Refyn validates tasks and dependencies, drops code references that cannot be confirmed in the selected workspace, then composes the final prompt locally. Invalid model output uses the deterministic local builder with a visible notice; model load/runtime failures are shown as errors. Matching prior results are cached.
+```sh
+REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testPromptEngineeringBaselineEvaluation
+REFINE_RUN_LOCAL_MODEL_EVALUATION=1 swift test --filter LocalInferenceTests/testClarificationQualityEvaluationEightUnderspecifiedAndTwoClearRequests
+REFINE_RUN_LOCAL_MODEL_EVALUATION=1 QUALITY_EVAL_OUTPUT=/tmp/refyn-quality-evaluation.txt swift test --filter ShallowQualityEvaluationTests/testRealVagueRequests
+```
 
-Before generating a prompt, Refyn checks the request against a small task-specific checklist. When information is missing, it asks up to three inline questions before inference. Continue folds answers in as user-confirmed requirements; Skip keeps unanswered gaps internal and tells the model not to guess. The generated prompt no longer includes a separate “Open questions” section. Settings › Prompts can turn clarification off. When a request explicitly refers to workspace notes, Refyn treats matching note items as user requirements and avoids asking questions those notes already answer. Malformed or unsupported model output falls back to the deterministic composer, with a visible notice; unsupported specifics get at most one corrective generation attempt.
+Replay a previously recorded response without running inference:
 
-Prompt modes:
+```sh
+REFINE_QUALITY_REPLAY=/path/to/recorded-output.txt swift test --filter ShallowQualityEvaluationTests/testReplayRecordedBaseline
+```
 
-- Auto keeps clear, simple requests concise; underspecified task requests still go through the checklist and local optimization path.
-- Basic improves clarity and constraints without unnecessary expansion.
-- Advanced adds ordered implementation stages, dependencies, acceptance criteria, verification, and a bounded retry workflow.
-- Custom applies only the techniques selected in the editor.
+See [the prompt quality evaluation](Docs/prompt-quality-evaluation.md) for measured outputs, latency, known limitations, and the evaluation method.
 
-Workspace files are scanned locally. Refyn retrieves bounded component metadata, matching symbols and paths, project notes, and user instructions; it does not send full repository files to a model. The analyzer excludes secrets, credential files, node_modules, generated/build output, binaries, and files over 512 KB. Workspace source is treated as untrusted reference data in the model prompt.
+## Project structure
 
-## Data and privacy
+- `Sources/Refyn/` — notch app, settings, workspace views, local inference, and dictation.
+- `Sources/RefineCore/` — prompt planning, optimization, workspace context, and persistence.
+- `RefineHelper/` — local TypeScript helper for workspace analysis.
+- `Tests/` — Swift unit, integration, and local-model evaluation tests.
 
-- App data is in the Refyn Application Support folder: database, workspace summaries/indexes, speech models, and Qwen model.
-- Refyn does not write to the selected repository. Removing a workspace deletes only Refyn's records.
-- Dictation is recorded only while requested, transcribed on-device, and is never sent to the language model automatically.
-- Optimization uses selected workspace context and the local model only. Downloading model/speech weights is the only network setup step.
+## Current limitations
 
-## Known limitations
+- Workspace analysis for Python and Swift is pattern-based; several other languages are detected but not deeply analyzed.
+- MLX inference requires Apple Silicon. Refyn reports an error if the local model cannot load.
+- The app is currently not sandboxed and release builds are ad-hoc signed; only user-selected workspaces are analyzed.
 
-- Python and Swift source analysis is pattern-based; Go, Rust, Java, and other languages are detected but not deeply analyzed.
-- The app is ad-hoc signed and not sandboxed; it reads only workspaces the user selects.
-- MLX inference is intended for Apple Silicon. The app reports a clear runtime error if the local model cannot be loaded.
+## Third-party software and models
 
-## Third-party
-
-- MLX Swift LM (MIT): https://github.com/ml-explore/mlx-swift-lm
-- Qwen3 4B 4-bit (Apache-2.0): https://huggingface.co/mlx-community/Qwen3-4B-4bit
-- GRDB.swift (MIT): https://github.com/groue/GRDB.swift
-- WhisperKit (MIT): https://github.com/argmaxinc/WhisperKit
-- TypeScript (Apache-2.0): https://github.com/microsoft/TypeScript
+- [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) — MIT
+- [Qwen3 4B 4-bit](https://huggingface.co/mlx-community/Qwen3-4B-4bit) — Apache-2.0
+- [WhisperKit](https://github.com/argmaxinc/WhisperKit) — MIT
+- [OpenAI Whisper model weights and license](https://github.com/openai/whisper/blob/main/LICENSE) — MIT
+- [GRDB.swift](https://github.com/groue/GRDB.swift) — MIT
+- [TypeScript](https://github.com/microsoft/TypeScript) — Apache-2.0

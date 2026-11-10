@@ -37,7 +37,7 @@ public enum Playbook {
         }
         if !["add ", "implement ", "create ", "build "].contains(where: { text.hasPrefix($0) }),
            has(["slow", "laggy", "lag ", "freeze", "freezes", "hangs", "takes forever", "performance", "latency", "memory usage", "speed up"]) {
-            return performance
+            return performance(for: analysis)
         }
         // Creating something new is a feature, not a complaint about something existing.
         let isCreation = ["add ", "implement ", "create ", "build ", "introduce ", "support "].contains { text.hasPrefix($0) }
@@ -141,29 +141,29 @@ public enum Playbook {
             ])
     }
 
-    static let performance = PlaybookGuidance(
-        topic: "Performance",
-        investigate: [
-            "State what is slow and when: the exact action, the starting state, and roughly how slow it feels (a number from a stopwatch beats \"slow\").",
-            "Measure before changing anything: use a profiler or timing logs on a realistic data size and write down the baseline.",
-            "Find the hot path: what runs on the critical path, what runs more often than it should, and what blocks the main thread or the UI.",
-            "Check the usual causes: repeated work inside loops or renders, unbounded data loading, missing caching or batching, sequential work that could be parallel, and large synchronous I/O.",
-        ],
-        goodLooksLike: [
-            "Define the workload and measurement first; ask for an agreed target if success depends on a numerical threshold.",
-            "Before and after numbers for the same scenario, reported in the final summary.",
-            "Behavior unchanged: the existing tests pass and the output for the same inputs is identical.",
-            "The fix addresses the measured hot spot, not the first slow-looking line.",
-        ],
-        examples: [
-            "Good: report a measured bottleneck, the targeted change, and before-and-after measurements on the same workload.",
-            "Bad: adding a cache or a background thread without measuring, then reporting that it \"should be faster\".",
-        ],
-        avoid: [
-            "Do not optimize without a baseline measurement.",
-            "Do not trade correctness for speed: no stale data, dropped work or changed behavior unless asked.",
-            "Do not rewrite large areas when a targeted change at the hot spot is enough.",
-        ])
+    static func performance(for analysis: RequestAnalysis) -> PlaybookGuidance {
+        let text = analysis.searchText
+        let database = text.range(of: #"(?i)\b(database|db|sql|query|queries)\b"#, options: .regularExpression) != nil
+        let concurrent = text.range(of: #"(?i)\b(concurren|simultaneous|multiple users|under load|timeout|time out)\w*\b"#, options: .regularExpression) != nil
+        var investigate = [
+            "Reproduce the reported workload and record a baseline before changing code.",
+            "Profile the critical path and identify the measured bottleneck before choosing a fix.",
+        ]
+        if database && concurrent {
+            investigate.append("For concurrent database timeouts, check query plans and access patterns, connection-pool waits, lock contention, timeout evidence, and CPU, memory or I/O saturation as candidates; change only the cause supported by measurements.")
+        } else if database {
+            investigate.append("Inspect query plans, query timings and access patterns; treat bottlenecks as hypotheses until diagnostics support them.")
+        }
+        return PlaybookGuidance(
+            topic: "Performance",
+            investigate: investigate,
+            goodLooksLike: [
+                "Compare the same representative workload before and after and report measured results without inventing a target.",
+                "Preserve the API and observable behavior unless the request explicitly allows a change.",
+            ],
+            examples: [],
+            avoid: ["Do not select an optimization before profiling identifies a bottleneck."])
+    }
 
     static let visual = PlaybookGuidance(
         topic: "Visual design quality",

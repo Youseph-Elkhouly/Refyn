@@ -216,13 +216,16 @@ struct LocalLLMProvider: LLMProvider, @unchecked Sendable {
         var target = manager
         if request.tier == .moderate, let fastManager, await fastManager.isInstalled { target = fastManager }
         let output = try await target.generate(request.modelPrompt, maxTokens: request.tier.outputTokenBudget)
-        guard let json = ModelOutput.jsonObject(from: output) else {
-            throw LLMError.invalidResponse("No JSON object was returned.")
+        guard let extraction = ModelOutput.extract(from: output) else {
+            throw LLMError.invalidResponse("No recoverable JSON object was returned.")
         }
+        let json = extraction.json
         do {
-            return try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+            var plan = try JSONDecoder().decode(ModelPlan.self, from: Data(json.utf8))
+            plan.recoveryEdits = extraction.edits
+            return plan
         } catch {
-            let excerpt = String(json.prefix(900))
+            let excerpt = json.count <= 700 ? json : String(json.prefix(300)) + " … " + String(json.suffix(380))
             throw LLMError.invalidResponse("\(error.localizedDescription) Response excerpt: \(excerpt)")
         }
     }
