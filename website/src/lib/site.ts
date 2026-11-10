@@ -11,7 +11,9 @@ export const site = {
   description:
     "Refyn is the free AI prompt optimizer that lives in your Mac's notch. Turn rough ideas into precise, actionable prompts for Claude Code, Codex, and other coding agents, on your own Mac.",
   repoUrl: "https://github.com/Youseph-Elkhouly/Refyn",
-  downloadUrl: process.env.NEXT_PUBLIC_DOWNLOAD_URL ?? "https://github.com/Youseph-Elkhouly/Refyn/releases/latest",
+  downloadUrl:
+    process.env.NEXT_PUBLIC_DOWNLOAD_URL ??
+    "https://github.com/Youseph-Elkhouly/Refyn/releases/download/v0.1.0/Refyn-0.1.0-macos-arm64.dmg",
   compatibility: "Free to use · macOS 14 or later · Apple Silicon",
 } as const;
 
