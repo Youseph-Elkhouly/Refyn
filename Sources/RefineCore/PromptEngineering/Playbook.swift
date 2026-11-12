@@ -4,6 +4,8 @@ import Foundation
 /// pitfalls. This is general engineering knowledge, not facts about the user's codebase, so it is always
 /// presented as a suggested bar the agent may adjust and never as a requirement the user stated.
 public struct PlaybookGuidance: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Sendable { case diagnose, create }
+    public var kind: Kind
     public var topic: String
     /// The feel the user asked for in their own words (for example "very slow and smooth"), when they gave one.
     public var direction: String?
@@ -15,8 +17,8 @@ public struct PlaybookGuidance: Codable, Hashable, Sendable {
     public var examples: [String]
     public var avoid: [String]
 
-    public init(topic: String, direction: String? = nil, investigate: [String], goodLooksLike: [String], examples: [String], avoid: [String]) {
-        self.topic = topic; self.direction = direction; self.investigate = investigate; self.goodLooksLike = goodLooksLike; self.examples = examples; self.avoid = avoid
+    public init(topic: String, kind: Kind = .diagnose, direction: String? = nil, investigate: [String], goodLooksLike: [String], examples: [String], avoid: [String]) {
+        self.topic = topic; self.kind = kind; self.direction = direction; self.investigate = investigate; self.goodLooksLike = goodLooksLike; self.examples = examples; self.avoid = avoid
     }
 }
 
@@ -28,24 +30,33 @@ public enum Playbook {
         guard analysis.complexity <= maxComplexity else { return nil }
         let text = analysis.text.lowercased()
         func has(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
-
-        let feel = ["smooth", "slow", "fast", "snappy", "gentle", "fluid", "premium", "natural", "graceful", "quick"]
+        let complaints = ["broken", "janky", "laggy", "stutter", "fix", "bug"]
+        let isCreation = analysis.taskType == .feature || has(["add", "implement", "create", "build", "introduce", "support", "new"])
+        let creationRequest = isCreation && !has(complaints)
+        let feel = ["smooth", "slow", "fast", "snappy", "gentle", "fluid", "premium", "natural", "graceful", "quick", "cool", "playful", "subtle", "bold", "minimal", "flashy", "elegant"]
         let movement = ["open", "clos", "expand", "collapse", "slide", "fade", "appear", "morph", "reveal"]
-        if has(["animation", "animat", "transition", "easing", "jank", "stutter", "flicker", "laggy open", "feels slow to open", "spring"])
-            || (has(feel) && has(movement)) {
+        let mentionsInteractiveEffect = has(["hover", "cursor", "pointer", "interactive"])
+            && has(["effect", "feedback", "trail", "style"])
+        let mentionsMotion = has(["animation", "animat", "transition", "easing", "jank", "stutter", "flicker", "laggy open", "feels slow to open", "spring"])
+            || mentionsInteractiveEffect
+            || (has(feel) && has(movement))
+        if mentionsMotion && creationRequest { return motionCreate(context, request: text) }
+        if mentionsMotion {
             return motion(context, request: text)
         }
-        if !["add ", "implement ", "create ", "build "].contains(where: { text.hasPrefix($0) }),
+        if !creationRequest,
            has(["slow", "laggy", "lag ", "freeze", "freezes", "hangs", "takes forever", "performance", "latency", "memory usage", "speed up"]) {
-            return performance
+            return performance(for: analysis)
         }
         // Creating something new is a feature, not a complaint about something existing.
-        let isCreation = ["add ", "implement ", "create ", "build ", "introduce ", "support "].contains { text.hasPrefix($0) }
-        if !isCreation, has(["ugly", "looks bad", "looks off", "spacing", "alignment", "typography", "contrast", "polish", "premium", "cluttered"]) {
+        if !creationRequest, has(["ugly", "looks bad", "looks off", "spacing", "alignment", "typography", "contrast", "polish", "premium", "cluttered"]) {
             return visual
         }
-        if !isCreation, has(["bug", "broken", "crash", "doesn't work", "not working", "fails", "failing", "error", "regression"]) {
+        if !creationRequest, has(["bug", "broken", "crash", "doesn't work", "not working", "fails", "failing", "error", "regression"]) {
             return bug
+        }
+        if creationRequest && has(["spinner", "modal", "cursor", "button", "menu", "page", "website", "interface", "visual"]) {
+            return featureCreate(analysis)
         }
         return underspecified(analysis)
     }
@@ -80,6 +91,13 @@ public enum Playbook {
 
     // MARK: Playbooks
 
+    static func featureCreate(_ analysis: RequestAnalysis) -> PlaybookGuidance {
+        PlaybookGuidance(topic: "Feature implementation", kind: .create,
+            investigate: ["Find where the requested feature belongs and check for existing patterns or similar behavior."],
+            goodLooksLike: ["Implement the requested behavior and preserve the user's concrete details.", "Follow existing product patterns; state any important choice the request leaves open."],
+            examples: [], avoid: ["Do not add unrelated functionality or assume requirements the user did not give."])
+    }
+
     enum Pace { case verySlow, slow, standard, fast }
 
     /// Reads the speed the user asked for, so the suggested numbers move with their intent instead of against it.
@@ -87,7 +105,7 @@ public enum Playbook {
         func has(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
         let intensifier = has(["very ", "extremely", "really ", "super ", "much "])
         var feel: [String] = []
-        for (word, label) in [("smooth", "smooth"), ("premium", "premium"), ("graceful", "graceful"), ("gentle", "gentle"), ("fluid", "fluid"), ("natural", "natural"), ("snappy", "snappy")] where text.contains(word) { feel.append(label) }
+        for (word, label) in [("smooth", "smooth"), ("premium", "premium"), ("graceful", "graceful"), ("gentle", "gentle"), ("fluid", "fluid"), ("natural", "natural"), ("snappy", "snappy"), ("cool", "cool"), ("playful", "playful"), ("subtle", "subtle"), ("bold", "bold"), ("minimal", "minimal"), ("flashy", "flashy"), ("elegant", "elegant")] where text.contains(word) { feel.append(label) }
         if has(["slow", "relaxed", "leisurely", "unhurried"]) {
             return (intensifier ? .verySlow : .slow, ((intensifier ? ["very slow"] : ["slow"]) + feel).joined(separator: ", "))
         }
@@ -105,16 +123,16 @@ public enum Playbook {
         good = [
             pacing,
             "Use continuous motion with controlled acceleration and deceleration; consider ease-out where appropriate.",
-            "Width, height and corner radius should change together without layout jumps.",
             "Content should appear naturally within the transition rather than popping in before its container.",
-            "Interrupted or reversed transitions should continue from the current visible state.",
             "Check frame pacing on supported displays; profile observed hitches before changing timings.",
             "Respect Reduce Motion with a short fade or an immediate state change."
         ]
-        examples = [
-            "Good: repeated opening, closing and reversal reach the requested state without snapping.",
-            "Bad: content jumps or a reversed transition finishes in the wrong state."
-        ]
+        if ["open", "clos", "expand", "collapse", "resize"].contains(where: request.contains) {
+            good.insert("Width, height and corner radius should change together without layout jumps.", at: 2)
+            good.insert("Interrupted or reversed transitions should continue from the current visible state.", at: 3)
+        }
+        examples = ["Good: the requested transition reaches its intended state without snapping.",
+                    "Bad: content jumps or an interrupted transition finishes in the wrong state."]
         let stack = (context.frameworks + context.languages).joined(separator: " ").lowercased()
         if stack.contains("swiftui") || stack.contains("swift") || stack.contains("appkit") {
             good.append("Apple platforms: prefer animating opacity and transforms with a value-scoped animation (for example `.animation(_, value:)`) over animating layout every frame; for AppKit panels, drive frame changes with `NSAnimationContext` or Core Animation instead of manual timers.")
@@ -124,6 +142,7 @@ public enum Playbook {
         }
         return PlaybookGuidance(
             topic: "Animation and motion quality",
+            kind: .diagnose,
             direction: direction,
             investigate: [
                 "Reproduce it and record the screen, stepping through frames (QuickTime, or slow-motion if available). Write down exactly which moment looks wrong instead of fixing a general impression.",
@@ -141,29 +160,56 @@ public enum Playbook {
             ])
     }
 
-    static let performance = PlaybookGuidance(
-        topic: "Performance",
-        investigate: [
-            "State what is slow and when: the exact action, the starting state, and roughly how slow it feels (a number from a stopwatch beats \"slow\").",
-            "Measure before changing anything: use a profiler or timing logs on a realistic data size and write down the baseline.",
-            "Find the hot path: what runs on the critical path, what runs more often than it should, and what blocks the main thread or the UI.",
-            "Check the usual causes: repeated work inside loops or renders, unbounded data loading, missing caching or batching, sequential work that could be parallel, and large synchronous I/O.",
-        ],
-        goodLooksLike: [
-            "Define the workload and measurement first; ask for an agreed target if success depends on a numerical threshold.",
-            "Before and after numbers for the same scenario, reported in the final summary.",
-            "Behavior unchanged: the existing tests pass and the output for the same inputs is identical.",
-            "The fix addresses the measured hot spot, not the first slow-looking line.",
-        ],
-        examples: [
-            "Good: report a measured bottleneck, the targeted change, and before-and-after measurements on the same workload.",
-            "Bad: adding a cache or a background thread without measuring, then reporting that it \"should be faster\".",
-        ],
-        avoid: [
-            "Do not optimize without a baseline measurement.",
-            "Do not trade correctness for speed: no stale data, dropped work or changed behavior unless asked.",
-            "Do not rewrite large areas when a targeted change at the hot spot is enough.",
-        ])
+    static func motionCreate(_ context: RetrievedContext, request: String) -> PlaybookGuidance {
+        let (_, direction) = pace(in: request)
+        let stack = (context.frameworks + context.languages).joined(separator: " ").lowercased()
+        let interactiveEffect = request.range(of: #"(?i)\b(?:hover|cursor|pointer|interactive)\w*\b"#, options: .regularExpression) != nil
+        var good = [
+            "Honor the requested visual theme and feel\(direction.map { ": \($0)" } ?? "") and make the effect visible against the site's backgrounds.",
+            "Keep the effect from blocking clicks, selection or text input."
+        ]
+        if interactiveEffect {
+            good += [
+                "Provide :focus-visible feedback equivalent to the hover effect for keyboard users.",
+                "Respect prefers-reduced-motion.",
+                "Touch devices do not have hover; provide tap feedback or no hover-only effect.",
+                "Use the site's existing palette and accent colors.",
+                "Use a transition with an explicit duration and easing chosen to fit the existing interaction style."
+            ]
+        }
+        if stack.contains("react") || stack.contains("css") || stack.contains("vue") || stack.contains("svelte") || stack.contains("typescript") || stack.contains("javascript") {
+            good += ["On web, animate transform and opacity rather than layout properties.", "Respect prefers-reduced-motion; for pointer-driven effects, disable them on touch or coarse-pointer devices.", "Use one requestAnimationFrame loop at most and cancel it when the effect is inactive."]
+        }
+        return PlaybookGuidance(topic: "Animation and motion design", kind: .create, direction: direction,
+            investigate: [
+                "Locate where the feature belongs and identify the stack and existing visual language (palette, typography and interaction patterns).",
+                "Check whether a similar animation or effect already exists so the new effect can fit the site without duplicating behavior."
+            ], goodLooksLike: good, examples: [], avoid: ["Do not alter unrelated page behavior or invent site-specific design tokens."])
+    }
+
+    static func performance(for analysis: RequestAnalysis) -> PlaybookGuidance {
+        let text = analysis.searchText
+        let database = text.range(of: #"(?i)\b(database|db|sql|query|queries)\b"#, options: .regularExpression) != nil
+        let concurrent = text.range(of: #"(?i)\b(concurren|simultaneous|multiple users|under load|timeout|time out)\w*\b"#, options: .regularExpression) != nil
+        var investigate = [
+            "Reproduce the reported workload and record a baseline before changing code.",
+            "Profile the critical path and identify the measured bottleneck before choosing a fix.",
+        ]
+        if database && concurrent {
+            investigate.append("For concurrent database timeouts, check query plans and access patterns, connection-pool waits, lock contention, timeout evidence, and CPU, memory or I/O saturation as candidates; change only the cause supported by measurements.")
+        } else if database {
+            investigate.append("Inspect query plans, query timings and access patterns; treat bottlenecks as hypotheses until diagnostics support them.")
+        }
+        return PlaybookGuidance(
+            topic: "Performance",
+            investigate: investigate,
+            goodLooksLike: [
+                "Compare the same representative workload before and after and report measured results without inventing a target.",
+                "Preserve the API and observable behavior unless the request explicitly allows a change.",
+            ],
+            examples: [],
+            avoid: ["Do not select an optimization before profiling identifies a bottleneck."])
+    }
 
     static let visual = PlaybookGuidance(
         topic: "Visual design quality",

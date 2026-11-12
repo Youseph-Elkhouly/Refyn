@@ -32,6 +32,133 @@ final class PlaybookTests: XCTestCase {
         XCTAssertNil(topic("rename the User model to Account"))
     }
 
+    func testCreationAndComplaintMotionRouting() async throws {
+        let ctx = RetrievedContext(workspaceName: "", languages: ["TypeScript"], frameworks: ["React", "CSS"], components: [], notes: [], analyzed: false)
+        let creation = "we want to add like a cool cursor animation to my personal website, we want it to be baby blue themed. make it cool"
+        let created = try XCTUnwrap(Playbook.match(RequestAnalysis(creation), context: ctx))
+        XCTAssertEqual(created.kind, .create)
+        let creationPlan = try await optimize(creation)
+        let createPrompt = creationPlan.optimizedPrompt
+        print("Creative animation prompt:\n\(createPrompt)")
+        for forbidden in ["does not say what exactly is wrong", "Reproduce it", "Name the symptom", "corner radius", "reversal"] {
+            XCTAssertFalse(createPrompt.localizedCaseInsensitiveContains(forbidden), "Unexpected: \(forbidden)")
+        }
+        XCTAssertTrue(createPrompt.localizedCaseInsensitiveContains("baby blue"))
+        XCTAssertTrue(createPrompt.localizedCaseInsensitiveContains("cursor"))
+        XCTAssertEqual(Playbook.match(RequestAnalysis("we want to add a fade-in animation to the hero"), context: ctx)?.kind, .create)
+        XCTAssertEqual(Playbook.match(RequestAnalysis("can you build a loading spinner"), context: ctx)?.kind, .create)
+        XCTAssertEqual(Playbook.match(RequestAnalysis("the panel open animation is janky"), context: ctx)?.kind, .diagnose)
+        XCTAssertEqual(Playbook.match(RequestAnalysis("fix the stutter when the sidebar collapses"), context: ctx)?.kind, .diagnose)
+        XCTAssertEqual(Playbook.match(RequestAnalysis("add a modal that expands smoothly"), context: ctx)?.kind, .create)
+        XCTAssertEqual(Playbook.pace(in: "make it cool").1, "cool")
+    }
+
+    func testCreativeRequestRoutesToModelAndNoProviderUsesCreatePlan() async throws {
+        let request = "we want to add like a cool cursor animation to my personal website, we want it to be baby blue themed. make it cool"
+        let generated = ModelPlan(
+            intent: request, taskType: "feature", role: "A web designer and front-end engineer",
+            objective: "Add a cool cursor animation to the personal website using a baby blue theme.",
+            confirmedRequirements: ["Add a cursor animation", "Use a baby blue theme"],
+            tasks: [.init(id: "t1", title: "Inspect the existing site style"), .init(id: "t2", title: "Add the cursor animation")],
+            successCriteria: ["The cursor animation uses the requested baby blue theme."])
+        let providerPlan = try await PromptOptimizer(provider: StubProvider(result: .success(generated)))
+            .optimize(.init(text: request, mode: .auto))
+        XCTAssertEqual(providerPlan.trace?.modelCalls, 1)
+        XCTAssertNotEqual(providerPlan.provider, "local")
+        print("Stub-provider creation prompt:\n\(providerPlan.optimizedPrompt)")
+
+        let localPlan = try await optimize(request)
+        XCTAssertEqual(localPlan.guidance?.kind, .create)
+        for forbidden in ["does not say what exactly is wrong", "Reproduce it", "Name the symptom", "corner radius", "reversal"] {
+            XCTAssertFalse(localPlan.optimizedPrompt.localizedCaseInsensitiveContains(forbidden), "Unexpected diagnostic content: \(forbidden)")
+        }
+        XCTAssertTrue(localPlan.optimizedPrompt.localizedCaseInsensitiveContains("baby blue"))
+        XCTAssertTrue(localPlan.optimizedPrompt.localizedCaseInsensitiveContains("cursor"))
+        print("No-provider creation prompt:\n\(localPlan.optimizedPrompt)")
+    }
+
+    func testCreativeModelPathMergesInteractiveGuidanceAndRepairsWeakOutput() async throws {
+        let request = "we want to add a cool hover effect to the buttons on my portfolio, kinda glowy, idk make it pop"
+        let generated = ModelPlan(
+            intent: request, taskType: "feature", role: "A web designer and front-end engineer",
+            objective: "Add a cool, glowing hover effect to the portfolio buttons and make it pop.",
+            confirmedRequirements: [request],
+            suggestedDecisions: ["Ensure the effect is subtle and not overbearing."],
+            tasks: [.init(id: "t1", title: "Locate the relevant code path", detail: "Locate all buttons in the portfolio layout and implement the hover effect.")],
+            successCriteria: ["The effect is visually appealing"])
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated)))
+            .optimize(.init(text: request, mode: .auto))
+        let prompt = plan.optimizedPrompt.lowercased()
+
+        XCTAssertEqual(plan.trace?.modelCalls, 1)
+        for expected in [":focus-visible", "prefers-reduced-motion", "touch devices", "existing palette", "duration and easing"] {
+            XCTAssertTrue(prompt.contains(expected), "Missing model-path creative guidance: \(expected)\n\(plan.optimizedPrompt)")
+        }
+        XCTAssertFalse(prompt.contains("subtle and not overbearing"))
+        XCTAssertFalse(prompt.contains("visually appealing"))
+        XCTAssertFalse(prompt.contains("locate the relevant code path. locate all buttons"))
+        XCTAssertFalse(prompt.contains("## Requirements"), "The requirement merely repeated the objective.\n\(plan.optimizedPrompt)")
+        XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("hover") && $0.localizedCaseInsensitiveContains("keyboard focus") })
+        XCTAssertTrue(plan.trace?.events.contains { $0.stage == "semantic" && $0.outcome == "removed" && $0.detail.contains("visual direction") } == true)
+        print("Creative hover effect prompt (stub provider):\n\(plan.optimizedPrompt)")
+    }
+
+    func testCreativeLocalPathIncludesInteractiveAccessibilityGuidance() async throws {
+        let request = "we want to add a cool hover effect to the buttons on my portfolio, kinda glowy, idk make it pop"
+        let plan = try await optimize(request)
+        let prompt = plan.optimizedPrompt.lowercased()
+        XCTAssertEqual(plan.guidance?.kind, .create)
+        for expected in [":focus-visible", "prefers-reduced-motion", "touch devices", "existing palette", "duration and easing"] {
+            XCTAssertTrue(prompt.contains(expected), "Missing local creative guidance: \(expected)\n\(plan.optimizedPrompt)")
+        }
+        XCTAssertFalse(prompt.contains("subtle"))
+        print("Creative hover effect prompt (no provider):\n\(plan.optimizedPrompt)")
+    }
+
+    func testExpressiveRequestRemovesOppositeIntensityAndRecordsCorrection() async throws {
+        let request = "Add a bold animation and make it pop"
+        let model = ModelPlan(intent: request, taskType: "feature", role: "", objective: "Add a bold animation that makes it pop.",
+                              suggestedDecisions: ["The animation feels subtle and understated."])
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(model)))
+            .optimize(.init(text: request, mode: .advanced))
+        XCTAssertFalse(plan.optimizedPrompt.localizedCaseInsensitiveContains("subtle"))
+        XCTAssertTrue(plan.trace?.events.contains { $0.stage == "semantic" && $0.outcome == "removed" && $0.detail.contains("restrained wording") } == true,
+                      "The correction should be visible in the pipeline trace: \(String(describing: plan.trace?.events))")
+    }
+
+    func testRestrainedRequestRemovesOppositeIntensity() {
+        let request = "Keep the transition subtle and minimal"
+        let model = ModelPlan(intent: request, taskType: "ui", role: "", objective: "Keep the transition subtle and minimal.",
+                              suggestedDecisions: ["Make it bold and eye-catching."])
+        let (corrected, changes) = SemanticValidator.correctWithReport(model, analysis: RequestAnalysis(request))
+        XCTAssertTrue(corrected.suggestedDecisions.isEmpty)
+        XCTAssertTrue(changes.contains { $0.action == .removed && $0.reason.contains("expressive wording") })
+    }
+
+    func testUnspecifiedIntensityDoesNotRemoveSuggestion() {
+        let request = "Add an animation to the page"
+        let suggestion = "The animation can feel subtle and understated."
+        let model = ModelPlan(intent: request, taskType: "feature", role: "", objective: "Add an animation to the page.",
+                              suggestedDecisions: [suggestion])
+        let (corrected, changes) = SemanticValidator.correctWithReport(model, analysis: RequestAnalysis(request))
+        XCTAssertEqual(corrected.suggestedDecisions, [suggestion])
+        XCTAssertFalse(changes.contains { $0.reason.contains("visual direction") })
+    }
+
+    func testCreativeDefaultsOnlyMentionBuildAndTestsWhenContextShowsSetup() {
+        let empty = RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false)
+        let setup = RetrievedContext(workspaceName: "site", languages: ["TypeScript"], frameworks: ["React"], components: [
+            .init(id: "manifest", name: "Package", type: "file", path: "package.json", files: ["src/hero.test.ts"], symbols: [], routes: [], connectsTo: [])
+        ], notes: [], analyzed: true)
+        let analysis = RequestAnalysis("we want to add a fade-in animation to the hero")
+        let noSetupPlan = PromptOptimizer.localPlan(analysis: analysis, context: empty)
+        let setupPlan = PromptOptimizer.localPlan(analysis: analysis, context: setup)
+        XCTAssertTrue(noSetupPlan.successCriteria.contains("The requested feature works and matches the stated style."))
+        XCTAssertFalse(noSetupPlan.successCriteria.contains("Existing tests and the build pass."))
+        XCTAssertTrue(setupPlan.successCriteria.contains("Existing tests and the build pass."))
+        XCTAssertEqual(setupPlan.tasks.first?.title, "Inspect where the feature belongs")
+    }
+
     func testStackSpecificHintsOnlyWhenStackKnown() {
         let swift = RetrievedContext(workspaceName: "w", languages: ["Swift"], frameworks: ["SwiftUI"], components: [], notes: [], analyzed: true)
         XCTAssertTrue(Playbook.motion(swift).goodLooksLike.contains { $0.contains("Apple platforms") })
