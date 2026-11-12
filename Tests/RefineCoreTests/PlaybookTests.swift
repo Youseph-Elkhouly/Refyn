@@ -83,7 +83,7 @@ final class PlaybookTests: XCTestCase {
             intent: request, taskType: "feature", role: "A web designer and front-end engineer",
             objective: "Add a cool, glowing hover effect to the portfolio buttons and make it pop.",
             confirmedRequirements: [request],
-            suggestedDecisions: ["Ensure the effect is subtle and not overbearing."],
+            suggestedDecisions: ["Use a box-shadow glow.", "Keep the glow consistent across portfolio buttons.", "Ensure the effect is subtle and not overbearing."],
             tasks: [.init(id: "t1", title: "Locate the relevant code path", detail: "Locate all buttons in the portfolio layout and implement the hover effect.")],
             successCriteria: ["The effect is visually appealing"])
         let plan = try await PromptOptimizer(provider: StubProvider(result: .success(generated)))
@@ -97,11 +97,25 @@ final class PlaybookTests: XCTestCase {
         XCTAssertFalse(prompt.contains("subtle and not overbearing"))
         XCTAssertFalse(prompt.contains("visually appealing"))
         XCTAssertFalse(prompt.contains("locate the relevant code path. locate all buttons"))
+        XCTAssertTrue(prompt.contains("use a box-shadow glow."))
+        XCTAssertTrue(prompt.contains("keep the glow consistent"), "Model-authored consistency guidance should survive unchanged. Trace: \(String(describing: plan.trace?.events))")
+        XCTAssertTrue(prompt.contains("you are a senior engineer"), "A role that is not a full 'You are…' sentence must use the default role.")
         XCTAssertTrue(prompt.contains("locate all buttons in the portfolio layout and implement the hover effect."),
                       "A valid model-provided feature detail should survive quality repair.\n\(plan.optimizedPrompt)")
         XCTAssertFalse(prompt.contains("## Requirements"), "The requirement merely repeated the objective.\n\(plan.optimizedPrompt)")
         XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("hover") && $0.localizedCaseInsensitiveContains("keyboard focus") })
         XCTAssertTrue(plan.trace?.events.contains { $0.stage == "semantic" && $0.outcome == "removed" && $0.detail.contains("visual direction") } == true)
+        XCTAssertTrue(plan.trace?.events.contains { $0.stage == "quality" && $0.outcome == "removed" && $0.detail.contains("visually appealing") } == true)
+        XCTAssertFalse(plan.suggestedDecisions.contains { $0.localizedCaseInsensitiveContains("locate where the feature belongs") }, "Investigation guidance belongs in tasks, not suggestions.")
+        let taskTitles = plan.tasks.map { $0.title.lowercased() }
+        let inspectIndex = try XCTUnwrap(taskTitles.firstIndex { $0.contains("locate") || $0.contains("inspect") })
+        let implementationIndex = taskTitles.firstIndex { $0.contains("implement") || $0.hasPrefix("add ") }
+        let verificationIndex = taskTitles.firstIndex { $0.contains("verify") || $0.contains("test") }
+        if let implementationIndex, let verificationIndex {
+            XCTAssertLessThan(inspectIndex, implementationIndex)
+            XCTAssertLessThan(implementationIndex, verificationIndex)
+        }
+        XCTAssertLessThanOrEqual(taskTitles.filter { $0.contains("implement") }.count, 1)
         print("Creative hover effect prompt (stub provider):\n\(plan.optimizedPrompt)")
     }
 
@@ -114,7 +128,27 @@ final class PlaybookTests: XCTestCase {
             XCTAssertTrue(prompt.contains(expected), "Missing local creative guidance: \(expected)\n\(plan.optimizedPrompt)")
         }
         XCTAssertFalse(prompt.contains("subtle"))
+        XCTAssertTrue(prompt.contains("buttons glow on hover and keyboard focus"))
+        XCTAssertTrue(prompt.contains("glow is visible against all page backgrounds"))
+        XCTAssertTrue(prompt.contains("hover over each affected control, then tab through each one"))
+        XCTAssertFalse(prompt.contains("run the existing tests"), "No test setup was selected in this local request.")
         print("Creative hover effect prompt (no provider):\n\(plan.optimizedPrompt)")
+    }
+
+    func testCreativeLocalObjectiveRemovesFillerAndKeepsConcreteDetails() async throws {
+        let request = "we want to add a cool hover effect to the buttons on my portfolio, kinda glowy, idk make it pop"
+        let plan = try await optimize(request)
+        let objective = try XCTUnwrap(plan.optimizedPrompt.components(separatedBy: "## Objective\n").dropFirst().first?.components(separatedBy: "\n\n").first)
+        XCTAssertEqual(objective, "Add a glowing hover effect to the portfolio buttons that makes them pop.")
+        for filler in ["idk", "kinda", "like", "we want to"] { XCTAssertFalse(objective.localizedCaseInsensitiveContains(filler)) }
+    }
+
+    func testCreativeDirectionCapturesEveryRequestedFeelWord() {
+        let request = "we want to add a cool hover effect to the buttons on my portfolio, kinda glowy, idk make it pop"
+        let context = RetrievedContext(workspaceName: "", languages: [], frameworks: [], components: [], notes: [], analyzed: false)
+        let guidance = Playbook.match(RequestAnalysis(request), context: context)
+        XCTAssertEqual(guidance?.direction, "cool, glowy, pops")
+        XCTAssertTrue(guidance?.goodLooksLike.contains("Match the requested feel (cool, glowy, pops) and keep the effect visible against the site's backgrounds.") == true)
     }
 
     func testExpressiveRequestRemovesOppositeIntensityAndRecordsCorrection() async throws {
@@ -155,10 +189,40 @@ final class PlaybookTests: XCTestCase {
         let analysis = RequestAnalysis("we want to add a fade-in animation to the hero")
         let noSetupPlan = PromptOptimizer.localPlan(analysis: analysis, context: empty)
         let setupPlan = PromptOptimizer.localPlan(analysis: analysis, context: setup)
-        XCTAssertTrue(noSetupPlan.successCriteria.contains("The requested feature works and matches the stated style."))
-        XCTAssertFalse(noSetupPlan.successCriteria.contains("Existing tests and the build pass."))
-        XCTAssertTrue(setupPlan.successCriteria.contains("Existing tests and the build pass."))
+        let observable = { (plan: PromptPlan) in
+            plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("appears") || $0.localizedCaseInsensitiveContains("visible") || $0.localizedCaseInsensitiveContains("works as described") }
+        }
+        XCTAssertTrue(observable(noSetupPlan), "The local feature plan should retain an observable criterion.")
+        XCTAssertFalse((noSetupPlan.successCriteria + noSetupPlan.verificationInstructions).contains { $0.localizedCaseInsensitiveContains("existing tests and the build pass") })
+        XCTAssertTrue((setupPlan.successCriteria + setupPlan.verificationInstructions).contains { $0.localizedCaseInsensitiveContains("existing tests and the build pass") })
+        XCTAssertTrue(observable(setupPlan))
         XCTAssertEqual(setupPlan.tasks.first?.title, "Inspect where the feature belongs")
+    }
+
+    func testDesignSuggestionSimilarToPlaybookButNotNearDuplicateIsKept() async throws {
+        let request = "Add a glowing hover effect to all buttons"
+        let model = ModelPlan(intent: request, taskType: "feature", role: "", objective: request,
+                              suggestedDecisions: ["Glow should be consistent across all buttons."])
+        let plan = try await PromptOptimizer(provider: StubProvider(result: .success(model)))
+            .optimize(.init(text: request, mode: .advanced))
+        XCTAssertTrue(plan.suggestedDecisions.contains { $0.localizedCaseInsensitiveContains("glow should be consistent across all buttons") }, "Design guidance must not be removed for broad semantic similarity.")
+        XCTAssertFalse(plan.trace?.events.contains { $0.stage == "quality" && $0.outcome == "removed" && $0.detail.contains("glow should be consistent") } ?? false)
+    }
+
+    func testAPIUnchangedSuggestionIsRemovedOnlyWhenUserStatedAPIConstraint() {
+        let statedRequest = "Don't change the API."
+        let statedPlan = ModelPlan(intent: statedRequest, taskType: "feature", role: "", objective: statedRequest,
+                                   suggestedDecisions: ["Keep the API unchanged"])
+        let (stated, statedChanges) = SemanticValidator.correctWithReport(statedPlan, analysis: RequestAnalysis(statedRequest))
+        XCTAssertTrue(stated.suggestedDecisions.isEmpty)
+        XCTAssertTrue(statedChanges.contains { $0.action == .removed && $0.reason.contains("user constraint") })
+
+        let unstatedRequest = "Improve the response handling."
+        let unstatedPlan = ModelPlan(intent: unstatedRequest, taskType: "feature", role: "", objective: unstatedRequest,
+                                     suggestedDecisions: ["Keep the API unchanged"])
+        let (unstated, unstatedChanges) = SemanticValidator.correctWithReport(unstatedPlan, analysis: RequestAnalysis(unstatedRequest))
+        XCTAssertEqual(unstated.suggestedDecisions, ["Keep the API unchanged"])
+        XCTAssertFalse(unstatedChanges.contains { $0.action == .removed && $0.reason.contains("user constraint") })
     }
 
     func testStackSpecificHintsOnlyWhenStackKnown() {

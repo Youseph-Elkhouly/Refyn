@@ -49,7 +49,9 @@ public enum PromptComposer {
             s.append(section("Definitions", bullets(terms)))
         }
         if let g = plan.guidance, plan.provider == "local" {
-            s.append(section(g.kind == .diagnose ? "Investigate first — \(g.topic)" : "Implementation guidance — \(g.topic)", bullets(g.investigate)))
+            if g.kind == .diagnose {
+                s.append(section("Investigate first — \(g.topic)", bullets(g.investigate)))
+            }
             s.append(section(g.direction == nil ? "What good looks like (suggested bar, not stated by the user — adapt it to this product)"
                             : "Target quality (derived from your request — adjust to taste)", bullets(g.goodLooksLike)))
             if !g.examples.isEmpty { s.append(section("Examples of the target quality", bullets(g.examples))) }

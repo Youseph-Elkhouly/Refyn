@@ -297,6 +297,22 @@ final class PromptQualityTests: XCTestCase {
                        "The diagnostic checklist should not be attached to the reproduction task.")
     }
 
+    func testDuplicateDiagnosticSuggestionIsRemovedAndTraced() async throws {
+        struct DiagnosticProvider: LLMProvider {
+            let identifier = "diagnostic-dedupe"
+            func plan(for request: OptimizationRequest) async throws -> ModelPlan {
+                ModelPlan(intent: request.analysis.intent, taskType: "performance", role: "", objective: request.analysis.intent,
+                          suggestedDecisions: ["Profile slow database queries under concurrent load."],
+                          tasks: [.init(id: "inspect", title: "Inspect query plans and profile slow database queries under concurrent load")])
+            }
+        }
+        let request = "Database queries are slow under concurrent load. Investigate the cause."
+        let plan = try await PromptOptimizer(provider: DiagnosticProvider()).optimize(.init(text: request, mode: .advanced))
+        XCTAssertFalse(plan.suggestedDecisions.contains { $0.localizedCaseInsensitiveContains("profile slow database queries") })
+        XCTAssertTrue(plan.trace?.events.contains { $0.stage == "quality" && $0.outcome == "removed" && $0.detail.contains("diagnostic covered by task") } == true,
+                      "Expected a trace explaining the diagnostic dedupe: \(String(describing: plan.trace?.events))")
+    }
+
     func testPreservedFiltersGetAnObservableNaturalCriterion() async throws {
         let request = "Add CSV export to monthly reports and keep the current date filters applied."
         let generated = ModelPlan(intent: "Add CSV export", taskType: "feature", role: "", objective: "Add CSV export to monthly reports",

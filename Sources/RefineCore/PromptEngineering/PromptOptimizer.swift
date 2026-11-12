@@ -217,11 +217,22 @@ public struct PromptOptimizer: Sendable {
         plan.cacheKey = cacheKey(for: input)
         plan.missingInformation = Self.dedupe(plan.missingInformation + unansweredQuestions)
         if input.mode != .custom || techniques.contains(.decomposition) || techniques.contains(.verification) {
+            let beforeCriteria = plan.successCriteria
+            let beforeSuggestions = plan.suggestedDecisions
             let issues = PromptQuality.repair(&plan, analysis: analysis, context: context)
             if !issues.isEmpty { trace.add("quality", "repaired-locally", issues.joined(separator: "; ")) }
+            for issue in issues where issue.hasPrefix("diagnostic covered by task:") || issue.hasPrefix("near-duplicate:") {
+                trace.add("quality", "removed", issue)
+            }
+            for removed in beforeCriteria where !plan.successCriteria.contains(removed) {
+                trace.add("quality", "removed", "success criterion: \(removed) (replaced with observable request-derived checks where available)")
+            }
+            for removed in beforeSuggestions where !plan.suggestedDecisions.contains(removed) {
+                trace.add("quality", "removed", "suggestion: \(removed) (subjective, generic, unsupported, or redundant)")
+            }
         }
         if plan.provider != "local", let guidance = plan.guidance, guidance.kind == .create {
-            let approach = guidance.investigate + guidance.goodLooksLike
+            let approach = guidance.goodLooksLike
             var alreadyCovered = plan.confirmedRequirements
             alreadyCovered.append(contentsOf: plan.constraints)
             alreadyCovered.append(contentsOf: plan.tasks.map { "\($0.title) \($0.detail)" })
@@ -236,6 +247,15 @@ public struct PromptOptimizer: Sendable {
                 suggestions.append(item)
             }
             plan.suggestedDecisions = suggestions
+            let hasInspection = plan.tasks.contains { task in
+                (task.title + " " + task.detail).range(of: #"(?i)\b(locate|find|inspect|review|check|identify|look for)\b"#, options: .regularExpression) != nil
+            }
+            if !hasInspection, let first = guidance.investigate.first {
+                var id = "create_inspect"
+                while plan.tasks.contains(where: { $0.id == id }) { id += "_" }
+                plan.tasks.insert(PlanTask(id: id, title: first), at: 0)
+            }
+            plan.tasks = PromptQuality.normalizeDependencies(plan.tasks)
             trace.add("guidance", "merged", "added create playbook suggestions to the model plan")
         }
         trace.add("composition", "input", "tasks=\(plan.tasks.count), verification=\(plan.verificationInstructions.count)")
@@ -243,19 +263,22 @@ public struct PromptOptimizer: Sendable {
 
         // 8: construction.
         let modelRole = modelPlan?.role.trimmingCharacters(in: .whitespacesAndNewlines)
-        let role = modelRole.flatMap { $0.count >= 16 && $0.lowercased() != "refine" ? $0 : nil } ?? Self.defaultRole(context)
+        let role = modelRole.flatMap { value -> String? in
+            value.range(of: #"(?is)^You are\b.+[.!?]$"#, options: .regularExpression) != nil ? value : nil
+        } ?? Self.defaultRole(context)
         var objective = Playbook.underspecified(analysis) != nil ? analysis.intent : (modelPlan?.objective ?? analysis.intent)
         if guidance != nil, modelPlan == nil {
             if let preface = objective.range(of: #"^.*?\bprompt\s*:\s*"#, options: [.regularExpression, .caseInsensitive]) {
                 objective = String(objective[preface.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
                 objective = objective.prefix(1).uppercased() + objective.dropFirst()
             }
+            if guidance?.kind == .create { objective = Playbook.createObjective(analysis.text, direction: guidance?.direction) }
             objective += objective.hasSuffix(".") ? "" : "."
-            if let direction = guidance?.direction {
+            if let direction = guidance?.direction, guidance?.kind != .create {
                 objective += " The user wants it to feel \(direction); the target quality below is derived from that."
             } else if guidance?.kind == .diagnose {
                 objective += " The request does not say what exactly is wrong, so first establish that, then fix it."
-            } else {
+            } else if guidance?.kind != .create {
                 objective += " Unspecified details are open; follow existing product patterns and state any important choice."
             }
         }
@@ -370,8 +393,8 @@ public struct PromptOptimizer: Sendable {
             successCriteria: groundedCriteria,
             missingInformation: m.missingInformation,
             confirmedRequirements: dedupe(userConfirmed + additionalConfirmed),
-            suggestedDecisions: nonRedundant(m.suggestedDecisions + optionalModelConstraints + optionalModelRequirements + optionalModelCriteria,
-                                             against: confirmed + taskText + analysis.constraints),
+            suggestedDecisions: nearExactRedundant(m.suggestedDecisions + optionalModelConstraints + optionalModelRequirements + optionalModelCriteria,
+                                                   against: confirmed + taskText + analysis.constraints),
             plannedComponents: (m.plannedComponents ?? []).enumerated().map { i, p in
                 PlannedComponent(id: "p\(i + 1)", name: p.name, type: ComponentType(rawValue: p.type) ?? .library, connectsTo: p.connectsTo.filter(componentIDs.contains))
             },
@@ -394,7 +417,10 @@ public struct PromptOptimizer: Sendable {
         let tasks: [PlanTask]
         switch analysis.taskType {
         case .feature:
-            tasks = [PlanTask(id: "t1", title: "Inspect where the feature belongs", detail: "Check the existing patterns and look for similar behavior."),
+            let detail = analysis.text.range(of: #"(?i)\b(?:hover|cursor|pointer)\w*\b"#, options: .regularExpression) != nil
+                ? "Hover over each affected control, then tab through each one and verify equivalent visible focus feedback."
+                : "Check the existing patterns and look for similar behavior."
+            tasks = [PlanTask(id: "t1", title: "Inspect where the feature belongs", detail: detail),
                      PlanTask(id: "t2", title: "Implement the requested feature", detail: "Honor the user's stated details and fit the existing product.", dependsOn: ["t1"]),
                      PlanTask(id: "t3", title: "Verify the behavior", detail: "Check it manually or with project tests if available.", dependsOn: ["t2"])]
         case .bugfix:
@@ -417,12 +443,19 @@ public struct PromptOptimizer: Sendable {
         case .bugfix: ["The reported problem no longer occurs.", "A test fails before the fix and passes after it.", "Existing tests still pass."]
         case .refactor: ["Behavior is unchanged; existing tests pass without modification.", "No caller is left on the old structure."]
         case .investigation: ["Every claim cites a file and line."]
-        case .feature: Self.featureCriteria(context)
+        case .feature: Self.featureCriteria(context, request: analysis.text)
         default: ["The requested behavior works as described.", "Existing tests and the build pass."]
+        }
+        var verification: [String] = []
+        if analysis.taskType == .feature, analysis.text.range(of: #"(?i)\b(?:hover|cursor|pointer)\w*\b"#, options: .regularExpression) != nil {
+            verification.append("Hover over each affected control, then tab through each one and verify equivalent visible focus feedback.")
+        }
+        if contextShowsBuildOrTestSetup(context) {
+            verification += ["Run the existing tests for the affected code.", "Run the build or type checker."]
         }
         return PromptPlan(originalPrompt: analysis.text, intent: analysis.intent, taskType: analysis.taskType, codeReferences: refs, tasks: tasks,
                           constraints: analysis.constraints, successCriteria: criteria, confirmedRequirements: dedupe(analysis.confirmedRequirements),
-                          verificationInstructions: ["Run the existing tests for the affected code.", "Run the build or type checker."])
+                          verificationInstructions: dedupe(verification))
     }
 
     private static func contextShowsBuildOrTestSetup(_ context: RetrievedContext) -> Bool {
@@ -435,8 +468,9 @@ public struct PromptOptimizer: Sendable {
         }
     }
 
-    private static func featureCriteria(_ context: RetrievedContext) -> [String] {
-        var criteria = ["The requested feature works and matches the stated style."]
+    private static func featureCriteria(_ context: RetrievedContext, request: String) -> [String] {
+        var criteria = PromptQuality.observableVisualCriteria(for: request)
+        if criteria.isEmpty { criteria = ["The requested feature works as described."] }
         if contextShowsBuildOrTestSetup(context) { criteria.append("Existing tests and the build pass.") }
         return criteria
     }
@@ -456,6 +490,17 @@ public struct PromptOptimizer: Sendable {
     static func nonRedundant(_ items: [String], against reference: [String]) -> [String] {
         var kept: [String] = []
         for item in items where !(reference + kept).contains(where: { semanticallySimilar(item, $0) }) { kept.append(item) }
+        return kept
+    }
+
+    private static func nearExactRedundant(_ items: [String], against reference: [String]) -> [String] {
+        var kept: [String] = []
+        for item in items where !(reference + kept).contains(where: { existing in
+            let forward = groundedWordCoverage(item, existing)
+            let reverse = groundedWordCoverage(existing, item)
+            return item.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(existing.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                || (forward >= 0.9 && reverse >= 0.9)
+        }) { kept.append(item) }
         return kept
     }
 

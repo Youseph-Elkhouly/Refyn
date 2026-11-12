@@ -108,7 +108,10 @@ public enum SemanticValidator {
             return isChange(m[2]) ? make(.preserve, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
                 : make(.prohibit, lead: "\(m[1]) \(m[2])", verb: m[2], object: m[3])
         }
-        if let m = text.captures(#"^(keep|preserve|leave|maintain|retain)\s+(.*?)(?:\s+(?:unchanged|as is|the same))?$"#), !m[2].isEmpty {
+        if let m = text.captures(#"^(keep|preserve|leave|maintain|retain)\s+(.*?)(?:\s+(?:unchanged|as is|as it is|the same))?$"#), !m[2].isEmpty {
+            let explicitPreservation = text.range(of: #"(?i)\b(?:unchanged|as is|as it is|the same)\s*[.!?]?$"#, options: .regularExpression) != nil
+            let qualityWords = #"(?i)\b(?:consistent|visible|accessible|responsive|readable|smooth|fast|simple)\b"#
+            if !explicitPreservation, text.range(of: qualityWords, options: .regularExpression) != nil { return [] }
             return make(.preserve, lead: m[1], object: m[2])
         }
         if let m = text.captures(#"^(?:max(?:imum)?(?:\s+of)?|at most|up to|no more than|limited to)\s+(\d+)\s+(\w+)"#), let n = Int(m[1]) {
@@ -280,8 +283,20 @@ public enum SemanticValidator {
             if kind == .suggestion {
                 let stripped = item.replacingOccurrences(of: #"(?i)^\s*(?:investigate\s+(?:the\s+)?reported\s+(?:behavior|symptom)|reported\s+(?:behavior|symptom))\s*:\s*"#,
                                                           with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                let suggestedDirectives = clauses(stripped).flatMap(parse)
                 let directiveOnly = !stripped.isEmpty && !clauses(stripped).isEmpty && clauses(stripped).allSatisfy { !parse($0).isEmpty }
-                if directiveOnly || (!parse(item).isEmpty && stripped == item.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                func matchesUserConstraint(_ directive: Directive) -> Bool {
+                    analysis.constraints.flatMap(directives(in:)).contains { stated in
+                        guard stated.kind == directive.kind else { return false }
+                        let ignored: Set<String> = ["the", "a", "an", "current", "existing", "as", "it", "is", "unchanged", "same"]
+                        let lhs = Set(directive.objectText.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)).subtracting(ignored)
+                        let rhs = Set(stated.objectText.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)).subtracting(ignored)
+                        guard !lhs.isEmpty, !rhs.isEmpty else { return false }
+                        return lhs.isSubset(of: rhs) || Double(lhs.intersection(rhs).count) / Double(max(lhs.count, rhs.count)) >= 0.65
+                    }
+                }
+                let restatesConstraint = !suggestedDirectives.isEmpty && suggestedDirectives.allSatisfy(matchesUserConstraint)
+                if (directiveOnly || (!parse(item).isEmpty && stripped == item.trimmingCharacters(in: .whitespacesAndNewlines))) && restatesConstraint {
                     corrections.append(Correction(list: listName, original: item, clause: item, action: .removed,
                                                   reason: "a user constraint belongs in Constraints, not symptom or approach guidance"))
                     return nil

@@ -3,8 +3,8 @@ import Foundation
 /// A local quality gate. Engineering methods are proposals, never additional user requirements.
 /// No inference, repository reads, or numeric performance targets.
 public enum PromptQuality {
-    private enum TaskRole { case investigation, implementation, verification, other }
-    private static let subjectiveVisualWords = ["appealing", "nice", "good-looking", "clean", "modern", "cool"]
+    private enum TaskRole: Equatable { case investigation, implementation, verification, other }
+    private static let subjectiveVisualWords = ["appealing", "nice", "good-looking", "clean", "modern", "cool", "matches the stated style"]
 
     private static func containsSubjectiveVisualLanguage(_ text: String) -> Bool {
         subjectiveVisualWords.contains { word in
@@ -12,14 +12,46 @@ public enum PromptQuality {
         }
     }
 
-    private static func observableVisualCriterion(for request: String) -> String? {
-        if request.range(of: #"(?i)\b(?:hover|cursor|pointer|focus|interactive)\w*\b"#, options: .regularExpression) != nil {
-            return "The requested effect appears on hover and keyboard focus and remains visible against the page background."
+    static func observableVisualCriteria(for request: String) -> [String] {
+        let interactive = request.range(of: #"(?i)\b(?:hover|cursor|pointer|focus|interactive)\w*\b"#, options: .regularExpression) != nil
+        guard interactive || request.range(of: #"(?i)\b(?:animation|transition|effect|feedback)\w*\b"#, options: .regularExpression) != nil else { return [] }
+        let target = request.range(of: #"(?i)\b(?:buttons?|links?|controls?|cards?|elements?)\b"#, options: .regularExpression).map { String(request[$0]).lowercased() } ?? "requested elements"
+        if interactive {
+            let capitalizedTarget = target.prefix(1).uppercased() + target.dropFirst()
+            let glow = request.range(of: #"(?i)\bglow(?:y|ing)?\b"#, options: .regularExpression) != nil
+            let effect = glow ? "glow" : "show the requested effect"
+            let visible = glow ? "Glow" : "The effect"
+            return ["\(capitalizedTarget) \(effect) on hover and keyboard focus.",
+                    "\(visible) is visible against all page backgrounds."]
         }
-        if request.range(of: #"(?i)\b(?:animation|transition|effect|feedback)\w*\b"#, options: .regularExpression) != nil {
-            return "The requested visual effect appears in its intended interaction state and remains visible against the page background."
-        }
+        return ["The requested visual effect appears in its intended interaction state and remains visible against all relevant backgrounds."]
+    }
+
+    private static func taskPhase(_ task: PlanTask) -> TaskRole? {
+        let title = task.title
+        let text = title + " " + task.detail
+        if title.range(of: #"(?i)^(?:verify|validate|test|check|run)\b"#, options: .regularExpression) != nil { return .verification }
+        if title.range(of: #"(?i)^(?:locate|find|inspect|review|map|check|identify|look for)\b"#, options: .regularExpression) != nil { return .investigation }
+        if title.range(of: #"(?i)^(?:implement|add|create|introduce|build|change|update|apply|integrate)\b"#, options: .regularExpression) != nil { return .implementation }
+        if text.range(of: #"(?i)\b(verify|validate|test|check manually|tab through|run existing tests|build pass)\w*\b"#, options: .regularExpression) != nil { return .verification }
+        if text.range(of: #"(?i)\b(?:implement|add|create|introduce|build)\b"#, options: .regularExpression) != nil { return .implementation }
+        if text.range(of: #"(?i)\b(locate|find|inspect|review|check|identify|look for)\b"#, options: .regularExpression) != nil { return .investigation }
         return nil
+    }
+
+    private static func uniqueID(_ base: String, tasks: [PlanTask]) -> String {
+        var id = base
+        while tasks.contains(where: { $0.id == id }) { id += "_" }
+        return id
+    }
+
+    private static func hasBuildOrTestSetup(_ context: RetrievedContext) -> Bool {
+        context.components.flatMap { [$0.path] + $0.files }.contains { path in
+            let name = URL(fileURLWithPath: path).lastPathComponent.lowercased()
+            return ["package.json", "package.swift", "makefile", "justfile", "pyproject.toml", "cargo.toml", "go.mod", "build.gradle", "pom.xml"].contains(name)
+                || name.hasSuffix(".xcodeproj") || name.hasSuffix(".xcworkspace")
+                || name.hasSuffix("test.swift") || name.hasSuffix("tests.swift") || name.hasSuffix(".test.ts") || name.hasSuffix(".spec.ts")
+        }
     }
 
     /// Retain genuine prerequisite links, but don't turn several independent observations into a serial checklist.
@@ -137,7 +169,7 @@ public enum PromptQuality {
         guard guided || plan.successCriteria.contains(where: genericCriterion)
             || plan.successCriteria.contains(where: containsSubjectiveVisualLanguage)
             || plan.suggestedDecisions.contains(where: containsSubjectiveVisualLanguage) else { return [] }
-        let findings = guided ? issues(plan, analysis: analysis) : []
+        var findings = guided ? issues(plan, analysis: analysis) : []
         let sources = ([analysis.searchText] + (context.map { InventionGuard.sources(analysis: analysis, context: $0) } ?? [])).joined(separator: "\n")
         func unsupportedMetric(_ text: String) -> Bool {
             guard let regex = try? NSRegularExpression(pattern: #"(?i)\b\d+(?:[.–-]\d+)?\s*(?:ms|milliseconds?|seconds?|fps|%)"#) else { return false }
@@ -152,10 +184,10 @@ public enum PromptQuality {
         let subjectiveCriteria = plan.successCriteria.filter(containsSubjectiveVisualLanguage)
         let subjectiveSuggestions = plan.suggestedDecisions.filter(containsSubjectiveVisualLanguage)
         if !subjectiveCriteria.isEmpty || !subjectiveSuggestions.isEmpty {
-            let replacement = observableVisualCriterion(for: analysis.searchText)
+            let replacements = observableVisualCriteria(for: analysis.searchText)
             plan.successCriteria.removeAll(where: containsSubjectiveVisualLanguage)
             plan.suggestedDecisions.removeAll(where: containsSubjectiveVisualLanguage)
-            if let replacement, !plan.successCriteria.contains(where: { PromptOptimizer.semanticallySimilar($0, replacement) }) {
+            for replacement in replacements where !plan.successCriteria.contains(where: { PromptOptimizer.semanticallySimilar($0, replacement) }) {
                 plan.successCriteria.append(replacement)
             }
             plan.successCriteria = PromptOptimizer.dedupe(plan.successCriteria)
@@ -394,7 +426,28 @@ public enum PromptQuality {
             strategy = [("Inspect integration points", "Read the relevant implementation and existing conventions; resolve discoverable details from the code."),
                         ("Implement the requested behavior", "Keep changes scoped to the request; flag unresolved product decisions instead of assuming them.")]
         }
-        if plan.tasks.count < 2 || !hasInvestigation(plan) {
+        if plan.guidance?.kind == .create {
+            var phases = Set(plan.tasks.compactMap(taskPhase))
+            if !phases.contains(.investigation), let inspect = plan.guidance?.investigate.first {
+                plan.tasks.insert(PlanTask(id: uniqueID("create_inspect", tasks: plan.tasks), title: inspect), at: 0)
+                phases.insert(.investigation)
+            }
+            let hasImplementationContent = plan.tasks.contains { $0.title.range(of: #"(?i)\b(?:implement|add|create|introduce|build)\b"#, options: .regularExpression) != nil
+                || $0.detail.range(of: #"(?i)\b(?:implement|add|create|introduce|build)\b"#, options: .regularExpression) != nil }
+            if !phases.contains(.implementation) && !hasImplementationContent {
+                plan.tasks.append(PlanTask(id: uniqueID("create_implement", tasks: plan.tasks), title: "Implement the requested feature", detail: "Honor the user's stated details and fit existing patterns."))
+            }
+            if !phases.contains(.verification) {
+                plan.tasks.append(PlanTask(id: uniqueID("create_verify", tasks: plan.tasks), title: "Verify the requested behavior", detail: "Check the result manually or with project tests when available."))
+            }
+            // Keep a coherent phase order while preserving model-authored details within each task.
+            let rank: (PlanTask) -> Int = { task in
+                switch taskPhase(task) { case .investigation: 0; case .implementation: 1; case .verification: 2; case .other, .none: 1 }
+            }
+            plan.tasks = plan.tasks.enumerated().sorted { lhs, rhs in
+                rank(lhs.element) == rank(rhs.element) ? lhs.offset < rhs.offset : rank(lhs.element) < rank(rhs.element)
+            }.map(\.element)
+        } else if plan.tasks.count < 2 || !hasInvestigation(plan) {
             let existing = plan.tasks.map { $0.title + " " + $0.detail }.joined(separator: " ").lowercased()
             for (index, step) in strategy.enumerated() where !existing.contains(step.0.lowercased()) {
                 var id = "quality\(index)"
@@ -493,8 +546,16 @@ public enum PromptQuality {
         }
         if security { investigations.append("Check successful and rejected sign-in attempts and access boundaries against existing policy; avoid introducing an unrequested authentication mechanism.") }
         plan.suggestedDecisions = PromptOptimizer.dedupe(plan.suggestedDecisions + investigations)
-        if !plan.verificationInstructions.contains(where: { $0.range(of: #"(?i)run.*(?:tests|build|type checker)"#, options: .regularExpression) != nil }) {
+        if (plan.guidance?.kind != .create || context.map { hasBuildOrTestSetup($0) } == true),
+           !plan.verificationInstructions.contains(where: { $0.range(of: #"(?i)run.*(?:tests|build|type checker)"#, options: .regularExpression) != nil }) {
             plan.verificationInstructions.append("Run the relevant existing tests and build; report commands, results and checks that could not run.")
+        }
+        if plan.guidance?.kind == .create,
+           analysis.searchText.range(of: #"(?i)\b(?:hover|cursor|pointer)\w*\b"#, options: .regularExpression) != nil {
+            let manual = "Hover over each affected control, then tab through each one and verify equivalent visible focus feedback."
+            if !plan.verificationInstructions.contains(where: { PromptOptimizer.semanticallySimilar($0, manual) }) {
+                plan.verificationInstructions.append(manual)
+            }
         }
         if debugging {
             let step = "Replay each reproduced failure after the fix and exercise adjacent existing interactions; distinguish automated regression coverage from manual observations."
@@ -549,15 +610,36 @@ public enum PromptQuality {
         // Scenario checks use a shared sentence frame, but each named case is distinct work; only remove exact repeats.
         plan.verificationInstructions = PromptOptimizer.dedupe(plan.verificationInstructions)
         let guidanceText = (plan.guidance?.investigate ?? []) + (plan.guidance?.goodLooksLike ?? []) + (plan.guidance?.avoid ?? [])
-        plan.suggestedDecisions = semanticDedupe(plan.suggestedDecisions, against: plan.tasks.map { "\($0.title) \($0.detail)" } + plan.verificationInstructions + plan.successCriteria + guidanceText)
+        plan.suggestedDecisions = semanticDedupe(plan.suggestedDecisions, against: plan.tasks.map { "\($0.title) \($0.detail)" } + plan.verificationInstructions + plan.successCriteria + guidanceText) { removed, reason in
+            findings.append("\(reason): \(removed)")
+        }
         plan.tasks = dedupeTasks(plan.tasks)
         plan.tasks = normalizeDependencies(plan.tasks)
         return findings
     }
 
-    private static func semanticDedupe(_ items: [String], against other: [String] = []) -> [String] {
+    private static func semanticDedupe(_ items: [String], against other: [String] = [], onRemoval: (String, String) -> Void) -> [String] {
         var kept: [String] = []
-        for item in items where !(other + kept).contains(where: { sameGuidance(item, $0) }) { kept.append(item) }
+        func isDiagnostic(_ text: String) -> Bool {
+            text.range(of: #"(?i)\b(measure|measurement|profile|profiling|benchmark|baseline|investigate|inspect|review|examine|analy[sz]e|check|monitor|trace|reproduce|identify|locate|find|audit)\w*\b"#, options: .regularExpression) != nil
+        }
+        func nearExact(_ lhs: String, _ rhs: String) -> Bool {
+            if lhs.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(rhs.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame { return true }
+            let forward = PromptOptimizer.groundedWordCoverage(lhs, rhs)
+            let reverse = PromptOptimizer.groundedWordCoverage(rhs, lhs)
+            return forward >= 0.9 && reverse >= 0.9
+        }
+        for item in items {
+            let match = (other + kept).first { candidate in
+                if isDiagnostic(item), isDiagnostic(candidate), sameGuidance(item, candidate) { return true }
+                return nearExact(item, candidate)
+            }
+            if let match {
+                let reason = isDiagnostic(item) && isDiagnostic(match) && sameGuidance(item, match)
+                    ? "diagnostic covered by task" : "near-duplicate"
+                onRemoval(item, reason)
+            } else { kept.append(item) }
+        }
         return kept
     }
 

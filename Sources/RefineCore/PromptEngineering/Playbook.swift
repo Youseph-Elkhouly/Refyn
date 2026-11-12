@@ -33,7 +33,7 @@ public enum Playbook {
         let complaints = ["broken", "janky", "laggy", "stutter", "fix", "bug"]
         let isCreation = analysis.taskType == .feature || has(["add", "implement", "create", "build", "introduce", "support", "new"])
         let creationRequest = isCreation && !has(complaints)
-        let feel = ["smooth", "slow", "fast", "snappy", "gentle", "fluid", "premium", "natural", "graceful", "quick", "cool", "playful", "subtle", "bold", "minimal", "flashy", "elegant"]
+        let feel = ["smooth", "slow", "fast", "snappy", "gentle", "fluid", "premium", "natural", "graceful", "quick", "cool", "playful", "subtle", "bold", "minimal", "flashy", "elegant", "glowy", "glow", "pop"]
         let movement = ["open", "clos", "expand", "collapse", "slide", "fade", "appear", "morph", "reveal"]
         let mentionsInteractiveEffect = has(["hover", "cursor", "pointer", "interactive"])
             && has(["effect", "feedback", "trail", "style"])
@@ -103,9 +103,13 @@ public enum Playbook {
     /// Reads the speed the user asked for, so the suggested numbers move with their intent instead of against it.
     static func pace(in text: String) -> (Pace, String?) {
         func has(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
+        func containsWord(_ word: String) -> Bool {
+            text.range(of: #"(?i)\b"# + NSRegularExpression.escapedPattern(for: word) + #"\b"#, options: .regularExpression) != nil
+        }
         let intensifier = has(["very ", "extremely", "really ", "super ", "much "])
         var feel: [String] = []
-        for (word, label) in [("smooth", "smooth"), ("premium", "premium"), ("graceful", "graceful"), ("gentle", "gentle"), ("fluid", "fluid"), ("natural", "natural"), ("snappy", "snappy"), ("cool", "cool"), ("playful", "playful"), ("subtle", "subtle"), ("bold", "bold"), ("minimal", "minimal"), ("flashy", "flashy"), ("elegant", "elegant")] where text.contains(word) { feel.append(label) }
+        let feelGroups: [([String], String)] = [( ["smooth"], "smooth"), (["premium"], "premium"), (["graceful"], "graceful"), (["gentle"], "gentle"), (["fluid"], "fluid"), (["natural"], "natural"), (["snappy"], "snappy"), (["cool"], "cool"), (["playful"], "playful"), (["subtle"], "subtle"), (["bold"], "bold"), (["minimal"], "minimal"), (["flashy"], "flashy"), (["elegant"], "elegant"), (["glowy", "glow", "glowing"], "glowy"), (["pop", "pops"], "pops")]
+        for (words, label) in feelGroups where words.contains(where: containsWord) { feel.append(label) }
         if has(["slow", "relaxed", "leisurely", "unhurried"]) {
             return (intensifier ? .verySlow : .slow, ((intensifier ? ["very slow"] : ["slow"]) + feel).joined(separator: ", "))
         }
@@ -165,7 +169,8 @@ public enum Playbook {
         let stack = (context.frameworks + context.languages).joined(separator: " ").lowercased()
         let interactiveEffect = request.range(of: #"(?i)\b(?:hover|cursor|pointer|interactive)\w*\b"#, options: .regularExpression) != nil
         var good = [
-            "Honor the requested visual theme and feel\(direction.map { ": \($0)" } ?? "") and make the effect visible against the site's backgrounds.",
+            direction.map { "Match the requested feel (\($0)) and keep the effect visible against the site's backgrounds." }
+                ?? "Keep the effect visible against the site's backgrounds.",
             "Keep the effect from blocking clicks, selection or text input."
         ]
         if interactiveEffect {
@@ -185,6 +190,30 @@ public enum Playbook {
                 "Locate where the feature belongs and identify the stack and existing visual language (palette, typography and interaction patterns).",
                 "Check whether a similar animation or effect already exists so the new effect can fit the site without duplicating behavior."
             ], goodLooksLike: good, examples: [], avoid: ["Do not alter unrelated page behavior or invent site-specific design tokens."])
+    }
+
+    /// Clean up a conversational feature request into a single imperative objective without dropping its concrete nouns.
+    static func createObjective(_ request: String, direction: String?) -> String {
+        var value = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = value.replacingOccurrences(of: #"(?i)^\s*(?:we\s+want\s+to|i\s+want\s+to|i'd\s+like\s+to|we'd\s+like\s+to|please|can you|could you)\s+"#, with: "", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"(?i)\b(?:idk|kinda|kind of|like|lol|tbh)\b\s*"#, with: "", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"(?i)\b[a-z-]+\s+hover effect\b"#, with: "hover effect", options: .regularExpression)
+        if direction?.contains("glowy") == true {
+            value = value.replacingOccurrences(of: #"(?i)\bhover effect\b"#, with: "glowing hover effect", options: .regularExpression)
+        }
+        value = value.replacingOccurrences(of: #"(?i)\bto the buttons\s+on\s+(?:my|the)\s+([\w'-]+)\b"#, with: "to the $1 buttons", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"(?i),?\s*\bglowy\b,?"#, with: "", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"(?i)\bmake it pop\b"#, with: "that makes them pop", options: .regularExpression)
+        if let direction {
+            for word in direction.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where word != "glowy" && word != "pops" {
+                value = value.replacingOccurrences(of: #"(?i)\b"# + NSRegularExpression.escapedPattern(for: word) + #"\b\s*"#, with: "", options: .regularExpression)
+            }
+        }
+        value = value.replacingOccurrences(of: #"\s+([,.!?])"#, with: "$1", options: .regularExpression)
+        value = value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+        value = value.prefix(1).uppercased() + value.dropFirst()
+        if !value.hasSuffix(".") { value += "." }
+        return value
     }
 
     static func performance(for analysis: RequestAnalysis) -> PlaybookGuidance {
