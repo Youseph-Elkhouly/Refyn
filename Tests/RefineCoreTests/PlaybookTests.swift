@@ -97,6 +97,8 @@ final class PlaybookTests: XCTestCase {
         XCTAssertFalse(prompt.contains("subtle and not overbearing"))
         XCTAssertFalse(prompt.contains("visually appealing"))
         XCTAssertFalse(prompt.contains("locate the relevant code path. locate all buttons"))
+        XCTAssertTrue(prompt.contains("locate all buttons in the portfolio layout and implement the hover effect."),
+                      "A valid model-provided feature detail should survive quality repair.\n\(plan.optimizedPrompt)")
         XCTAssertFalse(prompt.contains("## Requirements"), "The requirement merely repeated the objective.\n\(plan.optimizedPrompt)")
         XCTAssertTrue(plan.successCriteria.contains { $0.localizedCaseInsensitiveContains("hover") && $0.localizedCaseInsensitiveContains("keyboard focus") })
         XCTAssertTrue(plan.trace?.events.contains { $0.stage == "semantic" && $0.outcome == "removed" && $0.detail.contains("visual direction") } == true)

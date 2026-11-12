@@ -330,7 +330,8 @@ public enum PromptQuality {
         for index in plan.tasks.indices {
             if isFixStep(plan.tasks[index].title), prescribes(plan.tasks[index].detail), !explicitlyRequested(plan.tasks[index].detail) {
                 plan.tasks[index].detail = "Make a focused change supported by the diagnostic evidence."
-            } else if Lex.isObservation(plan.tasks[index].title), hasUnrequestedRemedy(plan.tasks[index].detail) {
+            } else if plan.guidance?.kind != .create,
+                      Lex.isObservation(plan.tasks[index].title), hasUnrequestedRemedy(plan.tasks[index].detail) {
                 plan.tasks[index].detail = "Inspect the current behavior and gather evidence; treat changes as candidates until the cause is confirmed."
             } else if plan.tasks[index].title.range(of: #"(?i)\bconnection\s*pool"#, options: .regularExpression) != nil {
                 plan.tasks[index].detail = "Check waits, exhaustion, and configured limits under the reported workload; treat pool capacity as a candidate until metrics confirm it."
