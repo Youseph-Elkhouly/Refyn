@@ -1,5 +1,6 @@
 import { RefynMark, StarIcon } from "@/components/refyn/icons";
 import { navLinks, site } from "@/lib/site";
+import { DownloadButton } from "./CallToAction";
 
 export function Header() {
   return (
@@ -24,9 +25,7 @@ export function Header() {
             <StarIcon size={13} />
             Star on GitHub
           </a>
-          <a href={site.downloadUrl} className="inline-flex h-8 items-center rounded-lg bg-white px-3 text-[13px] font-medium text-black transition-colors duration-200 hover:bg-white/85">
-            Download
-          </a>
+          <DownloadButton compact className="gap-2" />
         </div>
       </div>
     </header>
